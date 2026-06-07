@@ -22,7 +22,7 @@ export class Exporter {
             printContainer.style.height = 'auto';
             printContainer.style.overflow = 'visible';
             printContainer.style.backgroundColor = '#ffffff';
-            printContainer.style.padding = '20px';
+            printContainer.style.padding = '0px';
             document.body.appendChild(printContainer);
 
             // 2. Clone the table part (assuming elementId is the card/wrapper)
@@ -80,7 +80,7 @@ export class Exporter {
             const pdfWidth = pdf.internal.pageSize.getWidth();
             const pdfHeight = pdf.internal.pageSize.getHeight();
 
-            const margin = 10;
+            const margin = 0;
             const availableWidth = pdfWidth - (margin * 2);
             const availableHeight = pdfHeight - (margin * 2);
 
