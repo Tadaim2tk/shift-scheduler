@@ -18,8 +18,8 @@ export class Exporter {
             printContainer.style.position = 'absolute';
             printContainer.style.top = '-9999px';
             printContainer.style.left = '0';
-            printContainer.style.width = 'auto'; // allow expansion
-            printContainer.style.height = 'auto';
+            printContainer.style.width = 'max-content'; // force expansion
+            printContainer.style.height = 'max-content';
             printContainer.style.overflow = 'visible';
             printContainer.style.backgroundColor = '#ffffff';
             printContainer.style.padding = '0px';
@@ -31,7 +31,7 @@ export class Exporter {
             const clone = originalElement.cloneNode(true);
 
             // 3. Reset Styles on Clone to force full expansion
-            clone.style.width = 'auto';
+            clone.style.width = 'max-content';
             clone.style.height = 'auto';
             clone.style.maxHeight = 'none';
             clone.style.overflow = 'visible';
@@ -70,13 +70,18 @@ export class Exporter {
 
             // 7. Generate PDF
             const imgData = canvas.toDataURL('image/png');
+            
+            const imgProps = canvas; // use canvas directly for aspect calculation
+            
+            // Auto-detect orientation based on aspect ratio
+            const orientation = canvas.width > canvas.height ? 'landscape' : 'portrait';
+            
             const pdf = new jsPDF({
-                orientation: 'landscape',
+                orientation: orientation,
                 unit: 'mm',
                 format: 'a4'
             });
 
-            const imgProps = pdf.getImageProperties(imgData);
             const pdfWidth = pdf.internal.pageSize.getWidth();
             const pdfHeight = pdf.internal.pageSize.getHeight();
 
