@@ -3,7 +3,7 @@ import { JapaneseCalendar } from '../utils/holidays.js';
 export class SolverAPI {
 
     // Helper to package the frontend store state into the format Python expects
-    static buildPayload(store, flatDates) {
+    static buildPayload(store, flatDates, preserveAll = false) {
         // flatDates is array of strings e.g. "2026-03-22", "2026-03-23" ...
         
         const dateLabels = {};
@@ -29,11 +29,11 @@ export class SolverAPI {
             const monthSch = store.getSchedule(ym);
             store.state.staff.forEach(s => {
                 const cell = monthSch?.[s.id]?.[d];
-                if (cell) {
+                if (cell && cell.symbol) {
                     flatSchedule[s.id][dStr] = {
                         symbol: cell.symbol,
                         type: cell.type,
-                        locked: cell.locked || cell.symbol === '希' || cell.symbol === '欠' || cell.symbol === '／'
+                        locked: preserveAll ? true : (cell.locked || cell.symbol === '希' || cell.symbol === '欠' || cell.symbol === '／')
                     };
                 }
             });
