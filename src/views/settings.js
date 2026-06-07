@@ -114,11 +114,13 @@ export class SettingsView {
       return `
         <div class="card">
           <div class="flex justify-between items-center" style="margin-bottom: 1rem;">
-            <h3>Staff List (${staff.length})</h3>
+            <h3>社員ステータス (${staff.length})</h3>
             <button id="btn-add-staff" class="secondary">+ Add</button>
           </div>
-          <textarea id="staff-bulk-input" class="w-100" rows="5" placeholder="Paste names here (one per line) to bulk add..."></textarea>
-          <button id="btn-bulk-add" style="margin-top: 5px;">Bulk Add Names</button>
+          <div style="display: flex; gap: 8px; margin-bottom: 1rem;">
+            <input type="text" id="staff-bulk-input" class="w-100" placeholder="追加したい社員の名前を入力" style="flex: 1;">
+            <button id="btn-bulk-add" style="white-space: nowrap;">社員を追加</button>
+          </div>
           
           <table style="width: 100%; border-collapse: collapse; margin-top: 1rem;">
             <thead>
