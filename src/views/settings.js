@@ -123,6 +123,7 @@ export class SettingsView {
           <table style="width: 100%; border-collapse: collapse; margin-top: 1rem;">
             <thead>
               <tr style="text-align: left; border-bottom: 2px solid #ddd;">
+                <th style="width: 30px;"></th>
                 <th>Name</th>
                 <th>Title (役職)</th>
                 <th>Group (斑)</th>
@@ -150,7 +151,8 @@ export class SettingsView {
         };
 
         return `
-                <tr style="border-bottom: 1px solid #eee;">
+                <tr class="draggable-row" draggable="true" data-type="staff" data-idx="${idx}" style="border-bottom: 1px solid #eee; cursor: grab;">
+                  <td style="padding: 8px; text-align: center; color: #888;">≡</td>
                   <td style="padding: 8px;">
                     <input type="text" value="${s.name}" data-idx="${idx}" class="staff-name-input" style="width: 100%;">
                   </td>
@@ -172,8 +174,6 @@ export class SettingsView {
                   </td>
                   <td>
                     <button class="danger small" data-idx="${idx}" onclick="window.app.settings.deleteStaff(${idx})">🗑️</button>
-                    ${idx > 0 ? `<button class="small outline" onclick="window.app.settings.moveStaff(${idx}, -1)">↑</button>` : ''}
-                    ${idx < staff.length - 1 ? `<button class="small outline" onclick="window.app.settings.moveStaff(${idx}, 1)">↓</button>` : ''}
                   </td>
                 </tr>
               `;
@@ -205,6 +205,7 @@ export class SettingsView {
             <table style="width: 100%; border-collapse: collapse;">
                 <thead>
                     <tr style="border-bottom: 2px solid #ddd; text-align: left;">
+                        <th style="width: 30px;"></th>
                         <th>ID (Key)</th>
                         <th>Display Name</th>
                         <th>Required Default</th>
@@ -213,7 +214,8 @@ export class SettingsView {
                 </thead>
                 <tbody>
                     ${routes.map((r, idx) => `
-                        <tr style="border-bottom: 1px solid #eee;">
+                        <tr class="draggable-row" draggable="true" data-type="route" data-idx="${idx}" style="border-bottom: 1px solid #eee; cursor: grab;">
+                            <td style="padding: 8px; text-align: center; color: #888;">≡</td>
                             <td style="padding: 8px;">
                                 <input class="route-input" data-field="id" data-idx="${idx}" value="${r.id}" style="width:100%;">
                             </td>
@@ -225,8 +227,6 @@ export class SettingsView {
                             </td>
                             <td>
                                 <button class="danger small" onclick="window.app.store.deleteRoute(${idx}); window.app.settings.updateUI();">🗑️</button>
-                                ${idx > 0 ? `<button class="small outline" onclick="window.app.store.moveRoute(${idx}, -1); window.app.settings.updateUI();">↑</button>` : ''}
-                                ${idx < routes.length - 1 ? `<button class="small outline" onclick="window.app.store.moveRoute(${idx}, 1); window.app.settings.updateUI();">↓</button>` : ''}
                             </td>
                         </tr>
                     `).join('')}
@@ -352,9 +352,89 @@ export class SettingsView {
           const symbols = [...this.store.state.symbols];
           symbols[idx][field] = e.target.value;
           this.store.updateSymbols(symbols);
-        });
       });
     }
+
+    // --- Drag and Drop Logic ---
+    let draggedRowIdx = null;
+    let draggedRowType = null;
+
+    this.container.querySelectorAll('.draggable-row').forEach(row => {
+      row.addEventListener('dragstart', (e) => {
+        // Prevent dragstart from inputs to avoid conflicting with text selection
+        if (e.target.tagName.toLowerCase() === 'input' || e.target.tagName.toLowerCase() === 'select') {
+          e.preventDefault();
+          return;
+        }
+        draggedRowIdx = parseInt(e.currentTarget.dataset.idx);
+        draggedRowType = e.currentTarget.dataset.type;
+        e.currentTarget.style.opacity = '0.5';
+        e.dataTransfer.effectAllowed = 'move';
+      });
+
+      row.addEventListener('dragend', (e) => {
+        e.currentTarget.style.opacity = '1';
+        this.container.querySelectorAll('.draggable-row').forEach(r => {
+          r.style.borderTop = '';
+          r.style.borderBottom = '1px solid #eee';
+        });
+      });
+
+      row.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        const targetType = e.currentTarget.dataset.type;
+        if (draggedRowType !== targetType) return;
+
+        e.dataTransfer.dropEffect = 'move';
+        
+        const bounding = e.currentTarget.getBoundingClientRect();
+        const offset = e.clientY - bounding.top;
+        if (offset > bounding.height / 2) {
+          e.currentTarget.style.borderBottom = '2px solid #2196f3';
+          e.currentTarget.style.borderTop = '';
+        } else {
+          e.currentTarget.style.borderTop = '2px solid #2196f3';
+          e.currentTarget.style.borderBottom = '';
+        }
+      });
+
+      row.addEventListener('dragleave', (e) => {
+        e.currentTarget.style.borderTop = '';
+        e.currentTarget.style.borderBottom = '1px solid #eee';
+      });
+
+      row.addEventListener('drop', (e) => {
+        e.preventDefault();
+        const targetType = e.currentTarget.dataset.type;
+        if (draggedRowType !== targetType) return;
+
+        const targetIdx = parseInt(e.currentTarget.dataset.idx);
+        if (draggedRowIdx === null || draggedRowIdx === targetIdx) return;
+
+        const bounding = e.currentTarget.getBoundingClientRect();
+        const offset = e.clientY - bounding.top;
+        let insertIdx = targetIdx;
+        if (offset > bounding.height / 2) {
+          insertIdx = targetIdx + 1;
+        }
+
+        if (targetType === 'staff') {
+          const list = [...this.store.state.staff];
+          const item = list.splice(draggedRowIdx, 1)[0];
+          if (insertIdx > draggedRowIdx) insertIdx--;
+          list.splice(insertIdx, 0, item);
+          this.store.updateStaff(list);
+        } else if (targetType === 'route') {
+          const list = [...this.store.state.routes];
+          const item = list.splice(draggedRowIdx, 1)[0];
+          if (insertIdx > draggedRowIdx) insertIdx--;
+          list.splice(insertIdx, 0, item);
+          this.store.updateRoutes(list);
+        }
+        
+        this.updateUI();
+      });
+    });
   }
 
   moveStaff(idx, direction) {
