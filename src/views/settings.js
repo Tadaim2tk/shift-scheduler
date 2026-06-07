@@ -129,8 +129,8 @@ export class SettingsView {
                 <th>Name</th>
                 <th>Title (役職)</th>
                 <th>Group (斑)</th>
-                <th>Allowed Routes</th>
-                <th>Actions</th>
+                <th>通区状況</th>
+                <th>削除</th>
               </tr>
             </thead>
             <tbody id="staff-tbody">
@@ -175,7 +175,7 @@ export class SettingsView {
                     </button>
                   </td>
                   <td>
-                    <button class="danger small" data-idx="${idx}" onclick="window.app.settings.deleteStaff(${idx})">🗑️</button>
+                    <button class="danger small" data-idx="${idx}">🗑️ 削除</button>
                   </td>
                 </tr>
               `;
@@ -362,11 +362,13 @@ export class SettingsView {
       // Delete (This needs to be attached carefully or via global delegation)
       this.container.querySelectorAll('.danger').forEach(btn => {
         btn.onclick = () => {
-          const idx = parseInt(btn.dataset.idx);
-          const staff = [...this.store.state.staff];
-          staff.splice(idx, 1);
-          this.store.updateStaff(staff);
-          this.updateUI();
+          if (confirm('本当に削除しますか？')) {
+            const idx = parseInt(btn.dataset.idx);
+            const staff = [...this.store.state.staff];
+            staff.splice(idx, 1);
+            this.store.updateStaff(staff);
+            this.updateUI();
+          }
         };
       });
     } else if (this.activeTab === 'routes') {
