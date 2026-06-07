@@ -225,9 +225,15 @@ export class SettingsView {
                             </td>
                             <td>
                                 <div style="display:flex; gap:4px; align-items:center;">
-                                    <input class="route-input" data-field="required.weekday" data-idx="${idx}" type="number" value="${r.required?.weekday ?? 1}" style="width:40px;" title="平日">
-                                    <input class="route-input" data-field="required.sat" data-idx="${idx}" type="number" value="${r.required?.sat ?? 1}" style="width:40px;" title="土曜">
-                                    <input class="route-input" data-field="required.sun" data-idx="${idx}" type="number" value="${r.required?.sun ?? 1}" style="width:40px;" title="日祝">
+                                    <div style="display:flex; flex-direction:column; align-items:center; font-size:0.7em;">
+                                        <input class="route-input" data-field="required.weekday" data-idx="${idx}" type="number" value="${r.required?.weekday ?? 1}" style="width:50px; text-align:center; padding:4px;" title="平日">
+                                    </div>
+                                    <div style="display:flex; flex-direction:column; align-items:center; font-size:0.7em;">
+                                        <input class="route-input" data-field="required.sat" data-idx="${idx}" type="number" value="${r.required?.sat ?? 1}" style="width:50px; text-align:center; padding:4px;" title="土曜">
+                                    </div>
+                                    <div style="display:flex; flex-direction:column; align-items:center; font-size:0.7em;">
+                                        <input class="route-input" data-field="required.sun" data-idx="${idx}" type="number" value="${r.required?.sun ?? 1}" style="width:50px; text-align:center; padding:4px;" title="日祝">
+                                    </div>
                                 </div>
                             </td>
                             <td>
@@ -565,28 +571,55 @@ export class SettingsView {
     title.innerText = `担当社員設定: ${route.name}`;
     list.style.display = 'block';
 
-    const hasRoute = (s) => {
-        const baseCaps = s.capabilities || [];
-        const satCaps = s.satCapabilities || baseCaps;
-        const sunCaps = s.sunCapabilities || baseCaps;
-        return baseCaps.includes(route.id) || satCaps.includes(route.id) || sunCaps.includes(route.id);
-    };
-
     list.innerHTML = `
-        <div style="border:1px solid #444; padding:0.5rem; border-radius:4px; max-height:400px; overflow-y:auto;">
-            <p style="font-size:0.85em; color:#aaa; margin-bottom:8px;">チェックをつけると、平日・土曜・日祝すべての担当可能ルートにこの担務が追加されます。</p>
-            <div style="display:flex; flex-direction:column; gap:4px;">
-                ${staffList.map(s => `
-                    <label style="display:flex; align-items:center; gap: 5px; font-size:0.9em; padding: 4px; border-bottom: 1px solid #333;">
-                        <input type="checkbox" class="route-staff-cb" value="${s.id}" ${hasRoute(s) ? 'checked' : ''}>
-                        ${s.name}
-                    </label>
-                `).join('')}
-            </div>
+        <div style="border:1px solid #444; padding:0.5rem; border-radius:4px; max-height:500px; overflow-y:auto;">
+            <table style="width:100%; border-collapse: collapse; text-align:center;">
+                <thead style="position: sticky; top: 0; background: #252525; z-index: 10;">
+                    <tr>
+                        <th style="text-align:left; padding-bottom:8px;">社員名</th>
+                        <th style="padding-bottom:8px;"><label style="font-size:0.8em;cursor:pointer;"><input type="checkbox" id="check-all-wd"> 平日</label></th>
+                        <th style="padding-bottom:8px;"><label style="font-size:0.8em;cursor:pointer;"><input type="checkbox" id="check-all-sat"> 土曜</label></th>
+                        <th style="padding-bottom:8px;"><label style="font-size:0.8em;cursor:pointer;"><input type="checkbox" id="check-all-sun"> 日祝</label></th>
+                    </tr>
+                </thead>
+                <tbody>
+                ${staffList.map(s => {
+                    const wdCaps = s.capabilities || [];
+                    const satCaps = s.satCapabilities || wdCaps;
+                    const sunCaps = s.sunCapabilities || wdCaps;
+                    
+                    const hasWd = wdCaps.includes(route.id) ? 'checked' : '';
+                    const hasSat = satCaps.includes(route.id) ? 'checked' : '';
+                    const hasSun = sunCaps.includes(route.id) ? 'checked' : '';
+
+                    return `
+                    <tr style="border-bottom: 1px solid #333;">
+                        <td style="text-align:left; padding: 4px; font-size: 0.9em;">${s.name}</td>
+                        <td><input type="checkbox" class="route-staff-wd" data-sid="${s.id}" ${hasWd}></td>
+                        <td><input type="checkbox" class="route-staff-sat" data-sid="${s.id}" ${hasSat}></td>
+                        <td><input type="checkbox" class="route-staff-sun" data-sid="${s.id}" ${hasSun}></td>
+                    </tr>
+                    `;
+                }).join('')}
+                </tbody>
+            </table>
         </div>
     `;
 
     modal.classList.remove('hidden');
+
+    // Attach "check all" events
+    setTimeout(() => {
+        ['wd', 'sat', 'sun'].forEach(dayType => {
+            const allCb = this.container.querySelector(`#check-all-${dayType}`);
+            if (allCb) {
+                allCb.addEventListener('change', (e) => {
+                    const cbs = this.container.querySelectorAll(`.route-staff-${dayType}`);
+                    cbs.forEach(cb => cb.checked = e.target.checked);
+                });
+            }
+        });
+    }, 10);
 
     // Save
     const saveBtn = this.container.querySelector('#route-staff-modal-save');
@@ -594,26 +627,34 @@ export class SettingsView {
     saveBtn.parentNode.replaceChild(newSaveBtn, saveBtn);
 
     newSaveBtn.addEventListener('click', () => {
-        const checkedIds = new Set(Array.from(list.querySelectorAll('.route-staff-cb:checked')).map(cb => cb.value));
-        const newStaffList = [...this.store.state.staff];
+        const newStaffList = JSON.parse(JSON.stringify(this.store.state.staff)); // deep copy
 
         newStaffList.forEach(s => {
-            if (checkedIds.has(s.id)) {
-                // Add route if not present
-                if (!s.capabilities) s.capabilities = [];
-                if (!s.capabilities.includes(route.id)) s.capabilities.push(route.id);
-                
-                if (!s.satCapabilities) s.satCapabilities = [...s.capabilities];
-                if (!s.satCapabilities.includes(route.id)) s.satCapabilities.push(route.id);
-                
-                if (!s.sunCapabilities) s.sunCapabilities = [...s.capabilities];
-                if (!s.sunCapabilities.includes(route.id)) s.sunCapabilities.push(route.id);
-            } else {
-                // Remove route if present
-                if (s.capabilities) s.capabilities = s.capabilities.filter(c => c !== route.id);
-                if (s.satCapabilities) s.satCapabilities = s.satCapabilities.filter(c => c !== route.id);
-                if (s.sunCapabilities) s.sunCapabilities = s.sunCapabilities.filter(c => c !== route.id);
-            }
+            const wdCb = list.querySelector(`.route-staff-wd[data-sid="${s.id}"]`);
+            const satCb = list.querySelector(`.route-staff-sat[data-sid="${s.id}"]`);
+            const sunCb = list.querySelector(`.route-staff-sun[data-sid="${s.id}"]`);
+
+            if (!wdCb) return;
+
+            const isWd = wdCb.checked;
+            const isSat = satCb.checked;
+            const isSun = sunCb.checked;
+
+            if (!s.capabilities) s.capabilities = [];
+            if (!s.satCapabilities) s.satCapabilities = [...s.capabilities];
+            if (!s.sunCapabilities) s.sunCapabilities = [...s.capabilities];
+
+            // Weekday
+            if (isWd && !s.capabilities.includes(route.id)) s.capabilities.push(route.id);
+            if (!isWd) s.capabilities = s.capabilities.filter(c => c !== route.id);
+
+            // Saturday
+            if (isSat && !s.satCapabilities.includes(route.id)) s.satCapabilities.push(route.id);
+            if (!isSat) s.satCapabilities = s.satCapabilities.filter(c => c !== route.id);
+
+            // Sunday
+            if (isSun && !s.sunCapabilities.includes(route.id)) s.sunCapabilities.push(route.id);
+            if (!isSun) s.sunCapabilities = s.sunCapabilities.filter(c => c !== route.id);
         });
 
         this.store.updateStaff(newStaffList);
