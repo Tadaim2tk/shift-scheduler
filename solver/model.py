@@ -11,7 +11,8 @@ def run_optimization(request_data: Dict[str, Any]) -> Dict[str, Any]:
     date_labels = request_data.get('dateLabels', {}) # maps "day_index" -> {"isSun", "isSat", "isHol"}
     
     # Define generic off-duty routes, adding '空き' to absorb excess staff capacity
-    OFF_ROUTES = ['週休', '非番', '年休', '祝日', '空き']
+    # Add special UI locked states as valid OFF routes
+    OFF_ROUTES = ['週休', '非番', '年休', '祝日', '空き', '希', '欠', '／']
     
     model = cp_model.CpModel()
     
@@ -154,25 +155,36 @@ def run_optimization(request_data: Dict[str, Any]) -> Dict[str, Any]:
         hiban_target = round(days_in_month / 7)
         model.Add(sum(x[(s_idx, d, '非番')] for d in days) + hiban_slack_under[s_idx] == hiban_target + hiban_slack_over[s_idx])
 
-    # 8. Prevent solver from inventing 祝日 or 年休
-    # Only allow 祝日 or 年休 if the user explicitly locked them in the UI.
+    # 8. Prevent solver from inventing 祝日 or 年休 or special UI states
+    # Only allow them if the user explicitly locked them in the UI.
     for s_idx, staff in enumerate(staff_list):
         s_id = str(staff['id'])
         for d in days:
             is_locked_holiday = False
             is_locked_paid_leave = False
+            is_locked_kibou = False
+            is_locked_ketsu = False
+            is_locked_block = False
             if s_id in current_schedule and str(d) in current_schedule[s_id]:
                 cell = current_schedule[s_id][str(d)]
                 if cell.get('locked') is True:
-                    if cell.get('symbol') == '祝日':
-                        is_locked_holiday = True
-                    elif cell.get('symbol') == '年休':
-                        is_locked_paid_leave = True
+                    sym = cell.get('symbol')
+                    if sym == '祝日': is_locked_holiday = True
+                    elif sym == '年休': is_locked_paid_leave = True
+                    elif sym == '希': is_locked_kibou = True
+                    elif sym == '欠': is_locked_ketsu = True
+                    elif sym == '／': is_locked_block = True
             
             if not is_locked_holiday:
                 model.Add(x[(s_idx, d, '祝日')] == 0)
             if not is_locked_paid_leave:
                 model.Add(x[(s_idx, d, '年休')] == 0)
+            if not is_locked_kibou:
+                model.Add(x[(s_idx, d, '希')] == 0)
+            if not is_locked_ketsu:
+                model.Add(x[(s_idx, d, '欠')] == 0)
+            if not is_locked_block:
+                model.Add(x[(s_idx, d, '／')] == 0)
 
     # 9. Workload Balancing (Minimize max work days)
     max_work_days = model.NewIntVar(0, days_in_month, 'max_work_days')
