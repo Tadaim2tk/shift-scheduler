@@ -352,6 +352,7 @@ export class SettingsView {
           const symbols = [...this.store.state.symbols];
           symbols[idx][field] = e.target.value;
           this.store.updateSymbols(symbols);
+        });
       });
     }
 
