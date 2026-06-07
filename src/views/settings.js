@@ -208,9 +208,9 @@ export class SettingsView {
                         <th style="width: 30px;"></th>
                         <th>担務名 (ID)</th>
                         <th>シフト上の表示</th>
-                        <th>必要数 (平/土/日祝)</th>
-                        <th>担当社員</th>
-                        <th>Actions</th>
+                        <th>配置する曜日</th>
+                        <th>通区状況</th>
+                        <th>削除</th>
                     </tr>
                 </thead>
                 <tbody id="routes-tbody">
@@ -224,23 +224,36 @@ export class SettingsView {
                                 <input class="route-input" data-field="name" data-idx="${idx}" value="${r.name}" style="width:100%;">
                             </td>
                             <td>
-                                <div style="display:flex; gap:4px; align-items:center;">
-                                    <div style="display:flex; flex-direction:column; align-items:center; font-size:0.7em;">
-                                        <input class="route-input" data-field="required.weekday" data-idx="${idx}" type="number" value="${r.required?.weekday ?? 1}" style="width:50px; text-align:center; padding:4px;" title="平日">
-                                    </div>
-                                    <div style="display:flex; flex-direction:column; align-items:center; font-size:0.7em;">
-                                        <input class="route-input" data-field="required.sat" data-idx="${idx}" type="number" value="${r.required?.sat ?? 1}" style="width:50px; text-align:center; padding:4px;" title="土曜">
-                                    </div>
-                                    <div style="display:flex; flex-direction:column; align-items:center; font-size:0.7em;">
-                                        <input class="route-input" data-field="required.sun" data-idx="${idx}" type="number" value="${r.required?.sun ?? 1}" style="width:50px; text-align:center; padding:4px;" title="日祝">
-                                    </div>
+                                <div id="route-req-container-${idx}" style="display:flex; flex-direction:column; gap:4px; align-items:center;">
+                                    ${r.isMultiple ? `
+                                        <div class="req-numbers" style="display:flex; gap:4px; align-items:center;">
+                                            <div style="display:flex; flex-direction:column; align-items:center; font-size:0.7em;">
+                                                <input class="route-input" data-field="required.weekday" data-idx="${idx}" type="number" value="${r.required?.weekday ?? 1}" style="width:50px; text-align:center; padding:4px;" title="平日">平
+                                            </div>
+                                            <div style="display:flex; flex-direction:column; align-items:center; font-size:0.7em;">
+                                                <input class="route-input" data-field="required.sat" data-idx="${idx}" type="number" value="${r.required?.sat ?? 1}" style="width:50px; text-align:center; padding:4px;" title="土曜">土
+                                            </div>
+                                            <div style="display:flex; flex-direction:column; align-items:center; font-size:0.7em;">
+                                                <input class="route-input" data-field="required.sun" data-idx="${idx}" type="number" value="${r.required?.sun ?? 1}" style="width:50px; text-align:center; padding:4px;" title="日祝">日
+                                            </div>
+                                        </div>
+                                    ` : `
+                                        <div class="req-checkboxes" style="display:flex; gap:8px; align-items:center;">
+                                            <label style="font-size:0.8em; cursor:pointer;"><input class="route-input" type="checkbox" data-field="required.weekday" data-idx="${idx}" ${(r.required?.weekday || 0) > 0 ? 'checked' : ''}> 平</label>
+                                            <label style="font-size:0.8em; cursor:pointer;"><input class="route-input" type="checkbox" data-field="required.sat" data-idx="${idx}" ${(r.required?.sat || 0) > 0 ? 'checked' : ''}> 土</label>
+                                            <label style="font-size:0.8em; cursor:pointer;"><input class="route-input" type="checkbox" data-field="required.sun" data-idx="${idx}" ${(r.required?.sun || 0) > 0 ? 'checked' : ''}> 日</label>
+                                        </div>
+                                    `}
+                                    <label style="font-size:0.7em; color:#aaa; margin-top:4px; cursor:pointer;">
+                                        <input class="route-multiple-toggle" type="checkbox" data-idx="${idx}" ${r.isMultiple ? 'checked' : ''}> 1日に2人以上必要な担務
+                                    </label>
                                 </div>
                             </td>
                             <td>
                                 <button class="small outline" onclick="window.app.settings.openRouteStaffModal(${idx})">設定</button>
                             </td>
                             <td>
-                                <button class="danger small" onclick="window.app.store.deleteRoute(${idx}); window.app.settings.updateUI();">🗑️</button>
+                                <button class="danger small" onclick="if(confirm('本当に削除しますか？')) { window.app.store.deleteRoute(${idx}); window.app.settings.updateUI(); }">🗑️ 削除</button>
                             </td>
                         </tr>
                     `).join('')}
@@ -367,7 +380,16 @@ export class SettingsView {
         input.addEventListener('change', (e) => {
           const idx = parseInt(e.target.dataset.idx);
           const field = e.target.dataset.field;
-          this.store.updateRoute(idx, field, e.target.value);
+          const val = e.target.type === 'checkbox' ? (e.target.checked ? 1 : 0) : e.target.value;
+          this.store.updateRoute(idx, field, val);
+        });
+      });
+
+      this.container.querySelectorAll('.route-multiple-toggle').forEach(toggle => {
+        toggle.addEventListener('change', (e) => {
+          const idx = parseInt(e.target.dataset.idx);
+          this.store.updateRoute(idx, 'isMultiple', e.target.checked);
+          this.updateUI(); // re-render
         });
       });
     } else if (this.activeTab === 'symbols') {
