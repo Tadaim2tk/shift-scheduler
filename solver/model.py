@@ -77,21 +77,28 @@ def run_optimization(request_data: Dict[str, Any]) -> Dict[str, Any]:
         
         for r in routes:
             r_id = r['id']
-            required_count = r.get('required', 0)
+            required_val = r.get('required', 0)
             
-            if required_count > 0:
-                route_sum = sum(x[(s_idx, d, r_id)] for s_idx in range(num_staff))
-                
-                if is_sun_hol and r_id in ['1区', '2区', '3区', '4区', '5区', '6区', '7区', '8区', '9区', '10区', '11区', '12区', '13区', '1班予備', '2班予備', '計画', '夕差立']:
-                    model.Add(route_sum == 0)
-                elif is_sat and r_id in ['1区', '2区', '3区', '4区', '5区', '6区', '7区', '8区', '9区', '10区', '11区', '12区', '13区', '計画', '夕差立']:
-                    model.Add(route_sum == 0)
+            if isinstance(required_val, dict):
+                if is_sun_hol:
+                    required_count = int(required_val.get('sun', 0))
+                elif is_sat:
+                    required_count = int(required_val.get('sat', 0))
                 else:
-                    # 穴埋めをスラック変数を使ったソフト制約に変更
-                    slack_under[(d, r_id)] = model.NewIntVar(0, num_staff, f'slack_under_{d}_{r_id}')
-                    slack_over[(d, r_id)] = model.NewIntVar(0, num_staff, f'slack_over_{d}_{r_id}')
-                    # OR-Tools limitation: avoid subtraction. Use addition on both sides.
-                    model.Add(route_sum + slack_under[(d, r_id)] == required_count + slack_over[(d, r_id)])
+                    required_count = int(required_val.get('weekday', 0))
+            else:
+                required_count = int(required_val)
+            
+            route_sum = sum(x[(s_idx, d, r_id)] for s_idx in range(num_staff))
+            
+            if required_count == 0:
+                model.Add(route_sum == 0)
+            else:
+                # 穴埋めをスラック変数を使ったソフト制約に変更
+                slack_under[(d, r_id)] = model.NewIntVar(0, num_staff, f'slack_under_{d}_{r_id}')
+                slack_over[(d, r_id)] = model.NewIntVar(0, num_staff, f'slack_over_{d}_{r_id}')
+                # OR-Tools limitation: avoid subtraction. Use addition on both sides.
+                model.Add(route_sum + slack_under[(d, r_id)] == required_count + slack_over[(d, r_id)])
 
     # 4. Locked Shifts from UI
     # If the user manually locked a shift, force the solver to respect it.

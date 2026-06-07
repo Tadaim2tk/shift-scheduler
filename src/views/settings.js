@@ -131,7 +131,7 @@ export class SettingsView {
                 <th>Actions</th>
               </tr>
             </thead>
-            <tbody>
+            <tbody id="staff-tbody">
               ${staff.map((s, idx) => {
         const titles = this.store.getTitles();
         const currentTitle = s.attributes?.title || '新一般';
@@ -206,15 +206,16 @@ export class SettingsView {
                 <thead>
                     <tr style="border-bottom: 2px solid #ddd; text-align: left;">
                         <th style="width: 30px;"></th>
-                        <th>ID (Key)</th>
-                        <th>Display Name</th>
-                        <th>Required Default</th>
+                        <th>担務名 (ID)</th>
+                        <th>シフト上の表示</th>
+                        <th>必要数 (平/土/日祝)</th>
+                        <th>担当社員</th>
                         <th>Actions</th>
                     </tr>
                 </thead>
-                <tbody>
+                <tbody id="routes-tbody">
                     ${routes.map((r, idx) => `
-                        <tr class="draggable-row" draggable="true" data-type="route" data-idx="${idx}" style="border-bottom: 1px solid #eee; cursor: grab;">
+                        <tr class="draggable-route" data-idx="${idx}" style="border-bottom: 1px solid #eee; cursor: grab;">
                             <td style="padding: 8px; text-align: center; color: #888;">≡</td>
                             <td style="padding: 8px;">
                                 <input class="route-input" data-field="id" data-idx="${idx}" value="${r.id}" style="width:100%;">
@@ -223,7 +224,14 @@ export class SettingsView {
                                 <input class="route-input" data-field="name" data-idx="${idx}" value="${r.name}" style="width:100%;">
                             </td>
                             <td>
-                                <input class="route-input" data-field="required" data-idx="${idx}" type="number" value="${r.required}" style="width:60px;">
+                                <div style="display:flex; gap:4px; align-items:center;">
+                                    <input class="route-input" data-field="required.weekday" data-idx="${idx}" type="number" value="${r.required?.weekday ?? 1}" style="width:40px;" title="平日">
+                                    <input class="route-input" data-field="required.sat" data-idx="${idx}" type="number" value="${r.required?.sat ?? 1}" style="width:40px;" title="土曜">
+                                    <input class="route-input" data-field="required.sun" data-idx="${idx}" type="number" value="${r.required?.sun ?? 1}" style="width:40px;" title="日祝">
+                                </div>
+                            </td>
+                            <td>
+                                <button class="small outline" onclick="window.app.settings.openRouteStaffModal(${idx})">設定</button>
                             </td>
                             <td>
                                 <button class="danger small" onclick="window.app.store.deleteRoute(${idx}); window.app.settings.updateUI();">🗑️</button>
@@ -232,6 +240,18 @@ export class SettingsView {
                     `).join('')}
                 </tbody>
             </table>
+
+            <!-- Modal for Route Staff -->
+            <div id="route-staff-modal" class="modal hidden" style="position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);display:flex;justify-content:center;align-items:center;">
+              <div class="card" style="min-width:300px; max-height: 80vh; overflow-y: auto;">
+                  <h3 id="route-staff-modal-title">担当社員の設定</h3>
+                  <div id="route-staff-modal-list" style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 1rem 0;"></div>
+                  <div class="flex justify-between">
+                      <button id="route-staff-modal-close" class="outline">Cancel</button>
+                      <button id="route-staff-modal-save" class="primary">Save</button>
+                  </div>
+              </div>
+            </div>
         </div>
       `;
     } else {
@@ -356,86 +376,39 @@ export class SettingsView {
       });
     }
 
-    // --- Drag and Drop Logic ---
-    let draggedRowIdx = null;
-    let draggedRowType = null;
-
-    this.container.querySelectorAll('.draggable-row').forEach(row => {
-      row.addEventListener('dragstart', (e) => {
-        // Prevent dragstart from inputs to avoid conflicting with text selection
-        if (e.target.tagName.toLowerCase() === 'input' || e.target.tagName.toLowerCase() === 'select') {
-          e.preventDefault();
-          return;
-        }
-        draggedRowIdx = parseInt(e.currentTarget.dataset.idx);
-        draggedRowType = e.currentTarget.dataset.type;
-        e.currentTarget.style.opacity = '0.5';
-        e.dataTransfer.effectAllowed = 'move';
-      });
-
-      row.addEventListener('dragend', (e) => {
-        e.currentTarget.style.opacity = '1';
-        this.container.querySelectorAll('.draggable-row').forEach(r => {
-          r.style.borderTop = '';
-          r.style.borderBottom = '1px solid #eee';
-        });
-      });
-
-      row.addEventListener('dragover', (e) => {
-        e.preventDefault();
-        const targetType = e.currentTarget.dataset.type;
-        if (draggedRowType !== targetType) return;
-
-        e.dataTransfer.dropEffect = 'move';
-        
-        const bounding = e.currentTarget.getBoundingClientRect();
-        const offset = e.clientY - bounding.top;
-        if (offset > bounding.height / 2) {
-          e.currentTarget.style.borderBottom = '2px solid #2196f3';
-          e.currentTarget.style.borderTop = '';
-        } else {
-          e.currentTarget.style.borderTop = '2px solid #2196f3';
-          e.currentTarget.style.borderBottom = '';
-        }
-      });
-
-      row.addEventListener('dragleave', (e) => {
-        e.currentTarget.style.borderTop = '';
-        e.currentTarget.style.borderBottom = '1px solid #eee';
-      });
-
-      row.addEventListener('drop', (e) => {
-        e.preventDefault();
-        const targetType = e.currentTarget.dataset.type;
-        if (draggedRowType !== targetType) return;
-
-        const targetIdx = parseInt(e.currentTarget.dataset.idx);
-        if (draggedRowIdx === null || draggedRowIdx === targetIdx) return;
-
-        const bounding = e.currentTarget.getBoundingClientRect();
-        const offset = e.clientY - bounding.top;
-        let insertIdx = targetIdx;
-        if (offset > bounding.height / 2) {
-          insertIdx = targetIdx + 1;
+    // --- Drag and Drop Logic via Sortable.js ---
+    if (typeof Sortable !== 'undefined') {
+        const staffTbody = this.container.querySelector('#staff-tbody');
+        if (staffTbody) {
+            new Sortable(staffTbody, {
+                animation: 150,
+                handle: '.draggable-row',
+                onEnd: (evt) => {
+                    const list = [...this.store.state.staff];
+                    const item = list.splice(evt.oldIndex, 1)[0];
+                    list.splice(evt.newIndex, 0, item);
+                    this.store.updateStaff(list);
+                    // Minimal UI update to avoid full re-render on drop if possible, but updateUI is safer
+                    setTimeout(() => this.updateUI(), 10);
+                }
+            });
         }
 
-        if (targetType === 'staff') {
-          const list = [...this.store.state.staff];
-          const item = list.splice(draggedRowIdx, 1)[0];
-          if (insertIdx > draggedRowIdx) insertIdx--;
-          list.splice(insertIdx, 0, item);
-          this.store.updateStaff(list);
-        } else if (targetType === 'route') {
-          const list = [...this.store.state.routes];
-          const item = list.splice(draggedRowIdx, 1)[0];
-          if (insertIdx > draggedRowIdx) insertIdx--;
-          list.splice(insertIdx, 0, item);
-          this.store.updateRoutes(list);
+        const routesTbody = this.container.querySelector('#routes-tbody');
+        if (routesTbody) {
+            new Sortable(routesTbody, {
+                animation: 150,
+                handle: '.draggable-route',
+                onEnd: (evt) => {
+                    const list = [...this.store.state.routes];
+                    const item = list.splice(evt.oldIndex, 1)[0];
+                    list.splice(evt.newIndex, 0, item);
+                    this.store.updateRoutes(list);
+                    setTimeout(() => this.updateUI(), 10);
+                }
+            });
         }
-        
-        this.updateUI();
-      });
-    });
+    }
   }
 
   moveStaff(idx, direction) {
@@ -577,6 +550,79 @@ export class SettingsView {
 
     // Close Listener
     const closeBtn = this.container.querySelector('#cap-modal-close');
+    closeBtn.onclick = () => modal.classList.add('hidden');
+  }
+
+  // --- New Modal for Route-to-Staff Assignment ---
+  openRouteStaffModal(idx) {
+    const route = this.store.state.routes[idx];
+    const staffList = this.store.state.staff;
+
+    const modal = this.container.querySelector('#route-staff-modal');
+    const list = this.container.querySelector('#route-staff-modal-list');
+    const title = this.container.querySelector('#route-staff-modal-title');
+
+    title.innerText = `担当社員設定: ${route.name}`;
+    list.style.display = 'block';
+
+    const hasRoute = (s) => {
+        const baseCaps = s.capabilities || [];
+        const satCaps = s.satCapabilities || baseCaps;
+        const sunCaps = s.sunCapabilities || baseCaps;
+        return baseCaps.includes(route.id) || satCaps.includes(route.id) || sunCaps.includes(route.id);
+    };
+
+    list.innerHTML = `
+        <div style="border:1px solid #444; padding:0.5rem; border-radius:4px; max-height:400px; overflow-y:auto;">
+            <p style="font-size:0.85em; color:#aaa; margin-bottom:8px;">チェックをつけると、平日・土曜・日祝すべての担当可能ルートにこの担務が追加されます。</p>
+            <div style="display:flex; flex-direction:column; gap:4px;">
+                ${staffList.map(s => `
+                    <label style="display:flex; align-items:center; gap: 5px; font-size:0.9em; padding: 4px; border-bottom: 1px solid #333;">
+                        <input type="checkbox" class="route-staff-cb" value="${s.id}" ${hasRoute(s) ? 'checked' : ''}>
+                        ${s.name}
+                    </label>
+                `).join('')}
+            </div>
+        </div>
+    `;
+
+    modal.classList.remove('hidden');
+
+    // Save
+    const saveBtn = this.container.querySelector('#route-staff-modal-save');
+    const newSaveBtn = saveBtn.cloneNode(true);
+    saveBtn.parentNode.replaceChild(newSaveBtn, saveBtn);
+
+    newSaveBtn.addEventListener('click', () => {
+        const checkedIds = new Set(Array.from(list.querySelectorAll('.route-staff-cb:checked')).map(cb => cb.value));
+        const newStaffList = [...this.store.state.staff];
+
+        newStaffList.forEach(s => {
+            if (checkedIds.has(s.id)) {
+                // Add route if not present
+                if (!s.capabilities) s.capabilities = [];
+                if (!s.capabilities.includes(route.id)) s.capabilities.push(route.id);
+                
+                if (!s.satCapabilities) s.satCapabilities = [...s.capabilities];
+                if (!s.satCapabilities.includes(route.id)) s.satCapabilities.push(route.id);
+                
+                if (!s.sunCapabilities) s.sunCapabilities = [...s.capabilities];
+                if (!s.sunCapabilities.includes(route.id)) s.sunCapabilities.push(route.id);
+            } else {
+                // Remove route if present
+                if (s.capabilities) s.capabilities = s.capabilities.filter(c => c !== route.id);
+                if (s.satCapabilities) s.satCapabilities = s.satCapabilities.filter(c => c !== route.id);
+                if (s.sunCapabilities) s.sunCapabilities = s.sunCapabilities.filter(c => c !== route.id);
+            }
+        });
+
+        this.store.updateStaff(newStaffList);
+        modal.classList.add('hidden');
+        this.updateUI();
+    });
+
+    // Close
+    const closeBtn = this.container.querySelector('#route-staff-modal-close');
     closeBtn.onclick = () => modal.classList.add('hidden');
   }
 }

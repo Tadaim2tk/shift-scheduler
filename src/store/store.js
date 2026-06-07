@@ -68,45 +68,45 @@ export class Store {
         // User requested specific order
         const routes = [
             // Block 1
-            { id: '1区', name: '1区', required: 1 },
-            { id: '2区', name: '2区', required: 1 },
-            { id: '3区', name: '3区', required: 1 },
-            { id: '4区', name: '4区', required: 1 },
-            { id: '5区', name: '5区', required: 1 },
-            { id: '6区', name: '6区', required: 1 },
+            { id: '1区', name: '1区', required: { weekday: 1, sat: 1, sun: 1 } },
+            { id: '2区', name: '2区', required: { weekday: 1, sat: 1, sun: 1 } },
+            { id: '3区', name: '3区', required: { weekday: 1, sat: 1, sun: 1 } },
+            { id: '4区', name: '4区', required: { weekday: 1, sat: 1, sun: 1 } },
+            { id: '5区', name: '5区', required: { weekday: 1, sat: 1, sun: 1 } },
+            { id: '6区', name: '6区', required: { weekday: 1, sat: 1, sun: 1 } },
 
             // Block 2 (Group 1 Extras)
-            { id: '1班予備', name: '1班予備', required: 1 }, // Renamed from 1予備
-            { id: '混早1', name: '混早1', required: 1 },
-            { id: '混遅1', name: '混遅1', required: 1 },
-            { id: '混中1', name: '混中1', required: 1 }, // New/Enabled
+            { id: '1班予備', name: '1班予備', required: { weekday: 1, sat: 1, sun: 1 } },
+            { id: '混早1', name: '混早1', required: { weekday: 1, sat: 1, sun: 1 } },
+            { id: '混遅1', name: '混遅1', required: { weekday: 1, sat: 1, sun: 1 } },
+            { id: '混中1', name: '混中1', required: { weekday: 1, sat: 1, sun: 1 } },
 
             // Block 3
-            { id: '7区', name: '7区', required: 1 },
-            { id: '8区', name: '8区', required: 1 },
-            { id: '9区', name: '9区', required: 1 },
-            { id: '10区', name: '10区', required: 1 },
+            { id: '7区', name: '7区', required: { weekday: 1, sat: 1, sun: 1 } },
+            { id: '8区', name: '8区', required: { weekday: 1, sat: 1, sun: 1 } },
+            { id: '9区', name: '9区', required: { weekday: 1, sat: 1, sun: 1 } },
+            { id: '10区', name: '10区', required: { weekday: 1, sat: 1, sun: 1 } },
 
             // Block 4 (Group 2 Extras)
-            { id: '2班予備', name: '2班予備', required: 1 }, // Renamed from 2予備
-            { id: '混早2', name: '混早2', required: 1 },
-            { id: '混遅2', name: '混遅2', required: 1 },
-            { id: '混中2', name: '混中2', required: 1 }, // New/Enabled
+            { id: '2班予備', name: '2班予備', required: { weekday: 1, sat: 1, sun: 1 } },
+            { id: '混早2', name: '混早2', required: { weekday: 1, sat: 1, sun: 1 } },
+            { id: '混遅2', name: '混遅2', required: { weekday: 1, sat: 1, sun: 1 } },
+            { id: '混中2', name: '混中2', required: { weekday: 1, sat: 1, sun: 1 } },
 
             // Block 5
-            { id: '11区', name: '11区', required: 1 },
-            { id: '12区', name: '12区', required: 1 },
-            { id: '13区', name: '13区', required: 1 },
-            { id: '弥彦予備', name: '弥彦予備', required: 0 }, // Moved here
-            { id: '弥彦早', name: '弥彦早', required: 1 },
-            { id: '弥彦遅', name: '弥彦遅', required: 1 },
+            { id: '11区', name: '11区', required: { weekday: 1, sat: 1, sun: 1 } },
+            { id: '12区', name: '12区', required: { weekday: 1, sat: 1, sun: 1 } },
+            { id: '13区', name: '13区', required: { weekday: 1, sat: 1, sun: 1 } },
+            { id: '弥彦予備', name: '弥彦予備', required: { weekday: 0, sat: 0, sun: 0 } },
+            { id: '弥彦早', name: '弥彦早', required: { weekday: 1, sat: 1, sun: 1 } },
+            { id: '弥彦遅', name: '弥彦遅', required: { weekday: 1, sat: 1, sun: 1 } },
 
             // Block 6 (Specials)
-            { id: '特早', name: '特早', required: 1 },
-            { id: '特遅', name: '特遅', required: 1 },
-            { id: '計画', name: '計画', required: 1 },
-            { id: '夕方区分', name: '夕方区分', required: 1 }, // Renamed from 夕方
-            { id: '夕差立', name: '夕差立', required: 1 },
+            { id: '特早', name: '特早', required: { weekday: 1, sat: 1, sun: 1 } },
+            { id: '特遅', name: '特遅', required: { weekday: 1, sat: 1, sun: 1 } },
+            { id: '計画', name: '計画', required: { weekday: 1, sat: 0, sun: 0 } },
+            { id: '夕方区分', name: '夕方区分', required: { weekday: 1, sat: 1, sun: 0 } },
+            { id: '夕差立', name: '夕差立', required: { weekday: 1, sat: 0, sun: 0 } },
         ];
         return routes;
     }
@@ -162,13 +162,20 @@ export class Store {
         if (!this.state.routes.find(r => r.id === '弥彦早')) {
             const yahikoIdx = this.state.routes.findIndex(r => r.id === '弥彦予備');
             const insertAt = yahikoIdx >= 0 ? yahikoIdx + 1 : this.state.routes.length;
-            this.state.routes.splice(insertAt, 0, { id: '弥彦早', name: '弥彦早', required: 1 });
+            this.state.routes.splice(insertAt, 0, { id: '弥彦早', name: '弥彦早', required: { weekday: 1, sat: 1, sun: 1 } });
         }
         if (!this.state.routes.find(r => r.id === '弥彦遅')) {
             const yahikoHayaIdx = this.state.routes.findIndex(r => r.id === '弥彦早');
             const insertAt = yahikoHayaIdx >= 0 ? yahikoHayaIdx + 1 : this.state.routes.length;
-            this.state.routes.splice(insertAt, 0, { id: '弥彦遅', name: '弥彦遅', required: 1 });
+            this.state.routes.splice(insertAt, 0, { id: '弥彦遅', name: '弥彦遅', required: { weekday: 1, sat: 1, sun: 1 } });
         }
+
+        // Migrate 'required' to object format if it is a number
+        this.state.routes.forEach(r => {
+            if (typeof r.required === 'number') {
+                r.required = { weekday: r.required, sat: r.required, sun: r.required };
+            }
+        });
 
         // 2. Update Staff Capabilities
         this.state.staff.forEach(s => {
@@ -248,16 +255,21 @@ export class Store {
 
     // --- Dynamic Routes Management ---
     addRoute() {
-        const newRoute = { id: '新規担務', name: '新規担務', required: 1 };
+        const newRoute = { id: '新規担務', name: '新規担務', required: { weekday: 1, sat: 1, sun: 1 } };
         this.state.routes.push(newRoute);
         this.save();
     }
 
     updateRoute(index, field, value) {
-        if (field === 'required') {
-            value = parseInt(value) || 0;
+        if (field.startsWith('required.')) {
+            const subField = field.split('.')[1];
+            if (!this.state.routes[index].required || typeof this.state.routes[index].required === 'number') {
+                 this.state.routes[index].required = { weekday: 0, sat: 0, sun: 0 };
+            }
+            this.state.routes[index].required[subField] = parseInt(value) || 0;
+        } else {
+            this.state.routes[index][field] = value;
         }
-        this.state.routes[index][field] = value;
         // If they change the ID, we might need to cascade update capabilities, but
         // for now we trust they edit the name and required counts primarily.
         this.save();
