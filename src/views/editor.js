@@ -280,7 +280,7 @@ export class EditorView {
       div.innerHTML = `
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem;">
           <div style="display:flex; gap:10px; align-items:center;">
-             <button id="btn-home" class="outline">← Home</button>
+             <button id="btn-home" class="outline">← ホーム</button>
              <div class="calendar-nav">
                 <button id="btn-prev-month">◀</button>
                 <span id="current-month-display" style="font-size:1.2em; font-weight:bold; min-width:260px; text-align:center;">
@@ -290,15 +290,15 @@ export class EditorView {
              </div>
           </div>
           <div style="display:flex; gap:10px;">
-            <button id="btn-clear" class="danger outline">Clear All</button>
+            <button id="btn-clear" class="danger outline">すべてクリア</button>
             <div class="button-group">
               <!-- Valid IDs: btn-auto-ai, btn-auto-fill, btn-auto-full -->
-              <button id="btn-auto-ai" class="info" title="Use AI to fill gaps">✨ AI Fill (Beta)</button>
-              <button id="btn-auto-fill" title="Fill empty cells only (Keep manual edits)">✨ Fill Remaining</button>
-              <button id="btn-auto-full" class="warning" title="Reset non-locked cells and fill">🔒 Reset & Fill</button>
+              <button id="btn-auto-ai" class="info" title="AIを使用して空き枠を埋める">✨ AI自動生成 (Beta)</button>
+              <button id="btn-auto-fill" title="手動入力を保持して空き枠を埋める">✨ 空き枠を自動入力</button>
+              <button id="btn-auto-full" class="warning" title="ロックされていないセルをクリアして全体を再構築">🔒 リセット＆再構築</button>
             </div>
-            <button id="btn-pdf-export" class="outline">📄 PDF Export</button>
-            <button id="btn-save" class="primary">Save</button>
+            <button id="btn-pdf-export" class="outline">📄 PDF出力</button>
+            <button id="btn-save" class="primary">保存</button>
           </div>
         </div>
 
@@ -307,36 +307,36 @@ export class EditorView {
         <div class="card" style="overflow: auto; max-height: 85vh; border: 1px solid #444; padding: 0;">
              <!-- Day Settings Modal (Hidden) -->
              <div id="day-settings-modal" class="hidden" style="position:fixed; z-index:1010; top:50%; left:50%; transform:translate(-50%, -50%); background:#333; border:1px solid #555; padding:20px; border-radius:8px; min-width: 300px; color:#ddd;">
-                <h3 id="day-modal-title" style="margin-top:0; color:#fff; border-bottom:1px solid #555; padding-bottom:10px;">Day Settings</h3>
+                <h3 id="day-modal-title" style="margin-top:0; color:#fff; border-bottom:1px solid #555; padding-bottom:10px;">日別設定</h3>
                 <div style="margin: 15px 0; display:flex; flex-direction:column; gap:10px;">
                     <label style="display:block; cursor:pointer;"><input type="checkbox" id="check-1yobi"> 1班予備</label>
                     <label style="display:block; cursor:pointer;"><input type="checkbox" id="check-2yobi"> 2班予備</label>
                     <label style="display:block; cursor:pointer;"><input type="checkbox" id="check-yahiko"> 弥彦予備</label>
                 </div>
                 <div style="text-align:right; gap:10px;">
-                    <button id="day-modal-cancel" class="small outline" style="margin-right:8px;">Cancel</button>
-                    <button id="day-modal-save" class="small primary">Save</button>
+                    <button id="day-modal-cancel" class="small outline" style="margin-right:8px;">キャンセル</button>
+                    <button id="day-modal-save" class="small primary">保存</button>
                 </div>
             </div>
 
             <!-- Picker Modal logic is handled by event listeners, element created here -->
              <div id="picker-modal" class="hidden" style="position:fixed; z-index:1000; background:rgba(45, 45, 45, 0.95); border:1px solid #444; padding:10px; border-radius:6px; max-width: 340px;">
                  <div class="picker-header" style="display:flex; justify-content:space-between; margin-bottom:5px; color:#aaa;">
-                    <span>Editing <span id="picker-count" style="color:white;">1</span> cell(s)</span>
-                    <label><input type="checkbox" id="picker-lock"> 🔒 Lock</label>
+                    <span>選択中: <span id="picker-count" style="color:white;">1</span> セル</span>
+                    <label><input type="checkbox" id="picker-lock"> 🔒 固定</label>
                  </div>
                  <div id="picker-content" style="display:flex; flex-wrap:wrap; gap:6px;"></div>
-                 <div style="text-align:right; margin-top:8px;"><button class="small outline" id="picker-close">Close</button></div>
+                 <div style="text-align:right; margin-top:8px;"><button class="small outline" id="picker-close">閉じる</button></div>
              </div>
              
              <!-- Confirm Modal -->
              <div id="confirm-modal" class="hidden" style="position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.6); z-index:2000; display:flex; justify-content:center; align-items:center;">
                  <div class="card" style="min-width:300px; text-align:center;">
-                     <h3>Confirm Clear</h3>
-                     <p style="margin-bottom:1.5rem;">Are you sure you want to clear the entire schedule?</p>
+                     <h3>クリアの確認</h3>
+                     <p style="margin-bottom:1.5rem;">スケジュール全体をクリアしてもよろしいですか？</p>
                      <div class="flex justify-between">
-                         <button id="confirm-no" class="outline">Cancel</button>
-                         <button id="confirm-yes" class="danger">Clear All</button>
+                         <button id="confirm-no" class="outline">キャンセル</button>
+                         <button id="confirm-yes" class="danger">すべてクリア</button>
                      </div>
                  </div>
             </div>
@@ -525,25 +525,10 @@ export class EditorView {
       } catch (e) { alert(e.message); btn.disabled = false; }
     });
 
-    addListener('#btn-auto-fill', 'click', async () => {
-      const { Generator } = await import('../utils/generator.js');
-      const gen = new Generator(this.store);
-      const ranges = this.getVisibleRangeInfo();
-      const btn = container.querySelector('#btn-auto-fill');
-      btn.innerText = 'Processing...'; btn.disabled = true;
-      try {
-        for (const range of ranges) {
-          gen.generate(range.ym, { clearUnlocked: false, startDay: range.startDay, endDay: range.endDay });
-        }
-        window.location.reload();
-      } catch (e) { console.error(e); alert(e.message); btn.disabled = false; }
-    });
-
-    addListener('#btn-auto-full', 'click', async () => {
-      // confirm removed due to browser auto-dismiss glitch
+    const runOptimization = async (btnId, preserveAll, originalText) => {
       const { SolverAPI } = await import('../api/solver_api.js');
       const ranges = this.getVisibleRangeInfo();
-      const btn = container.querySelector('#btn-auto-full');
+      const btn = container.querySelector(btnId);
       btn.innerText = 'Processing...'; btn.disabled = true;
       try {
         let flatDates = [];
@@ -553,7 +538,7 @@ export class EditorView {
             }
         });
 
-        const payload = SolverAPI.buildPayload(this.store, flatDates);
+        const payload = SolverAPI.buildPayload(this.store, flatDates, preserveAll);
         const result = await SolverAPI.solve(payload);
 
         if (result.status === 'success') {
@@ -567,9 +552,12 @@ export class EditorView {
 
                     let sch = this.store.getSchedule(ym) || {};
                     if (!sch[s_id]) sch[s_id] = {};
+                    
+                    const originalCell = this.store.getSchedule(ym)?.[s_id]?.[customDayStr] || {};
+                    
                     sch[s_id][customDayStr] = {
                         symbol: daysMap[idx_str].symbol,
-                        locked: daysMap[idx_str].locked,
+                        locked: preserveAll && originalCell.symbol ? (originalCell.locked || false) : daysMap[idx_str].locked,
                         type: 'ROUTE'
                     };
                     this.store.updateSchedule(ym, sch);
@@ -583,9 +571,12 @@ export class EditorView {
         console.error(e); 
         alert('Server Error or Connection Refused. Is the Python solver running on port 8000? ' + e.message); 
         btn.disabled = false; 
-        btn.innerText = '🔒 Reset & Fill'; 
+        btn.innerText = originalText; 
       }
-    });
+    };
+
+    addListener('#btn-auto-fill', 'click', () => runOptimization('#btn-auto-fill', true, '✨ 空き枠を自動入力'));
+    addListener('#btn-auto-full', 'click', () => runOptimization('#btn-auto-full', false, '🔒 リセット＆再構築'));
 
     addListener('#btn-clear', 'click', () => {
       container.querySelector('#confirm-modal').classList.remove('hidden');

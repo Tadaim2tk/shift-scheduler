@@ -154,6 +154,32 @@ def run_optimization(request_data: Dict[str, Any]) -> Dict[str, Any]:
         hiban_target = round(days_in_month / 7)
         model.Add(sum(x[(s_idx, d, '非番')] for d in days) + hiban_slack_under[s_idx] == hiban_target + hiban_slack_over[s_idx])
 
+    # 8. Prevent solver from inventing 祝日 or 年休
+    # Only allow 祝日 or 年休 if the user explicitly locked them in the UI.
+    for s_idx, staff in enumerate(staff_list):
+        s_id = str(staff['id'])
+        for d in days:
+            is_locked_holiday = False
+            is_locked_paid_leave = False
+            if s_id in current_schedule and str(d) in current_schedule[s_id]:
+                cell = current_schedule[s_id][str(d)]
+                if cell.get('locked') is True:
+                    if cell.get('symbol') == '祝日':
+                        is_locked_holiday = True
+                    elif cell.get('symbol') == '年休':
+                        is_locked_paid_leave = True
+            
+            if not is_locked_holiday:
+                model.Add(x[(s_idx, d, '祝日')] == 0)
+            if not is_locked_paid_leave:
+                model.Add(x[(s_idx, d, '年休')] == 0)
+
+    # 9. Workload Balancing (Minimize max work days)
+    max_work_days = model.NewIntVar(0, days_in_month, 'max_work_days')
+    for s_idx in range(num_staff):
+        total_work_days = sum(x[(s_idx, d, r_id)] for d in days for r_id in route_ids)
+        model.Add(total_work_days <= max_work_days)
+
     # ----------------------------------------------------
     # Objective
     # ----------------------------------------------------
@@ -170,13 +196,12 @@ def run_optimization(request_data: Dict[str, Any]) -> Dict[str, Any]:
                 
     for s_idx in range(num_staff):
         objective_terms.append(shukyu_slack_under[s_idx] * -100)
-        objective_terms.append(shukyu_slack_over[s_idx] * -100)
+        objective_terms.append(shukyu_slack_over[s_idx] * -5)   # Small penalty for extra shukyu to prefer '空き'
         objective_terms.append(hiban_slack_under[s_idx] * -100)
-        objective_terms.append(hiban_slack_over[s_idx] * -100)
+        objective_terms.append(hiban_slack_over[s_idx] * -5)    # Small penalty for extra hiban to prefer '空き'
     
-    # Minimize explicit empty assignments to keep schedule dense
-    total_empty = sum(x[(s, d, '空き')] for s in range(num_staff) for d in days)
-    objective_terms.append(total_empty * -5)
+    # Penalize the maximum work days across all staff to balance the workload
+    objective_terms.append(max_work_days * -20)
 
     # Specialist & Bridge Protection (Past Conversation Rule)
     # 選択肢（スキル）が少ない社員から優先的に埋める（数理的LRVヒューリスティック）
