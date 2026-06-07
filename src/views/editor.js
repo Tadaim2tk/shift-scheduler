@@ -166,37 +166,21 @@ export class EditorView {
         const isSunOrHol = isSun || isHol;
 
         let reqs = [];
-        if (isSat) {
-          reqs = [
-            { id: '混早1', count: 1 }, { id: '混早2', count: 1 },
-            { id: '混遅1', count: 1 }, { id: '混遅2', count: 1 },
-            { id: '弥彦早', count: 1 }, { id: '弥彦遅', count: 1 },
-            { id: '特早', count: 1 }, { id: '特遅', count: 1 },
-            { id: '夕方区分', count: 1 }, { id: '1班予備', count: 1 }, { id: '2班予備', count: 1 }
-          ];
-        } else if (isSunOrHol) {
-          reqs = [
-            { id: '混早1', count: 1 }, { id: '混早2', count: 1 },
-            { id: '混遅1', count: 1 }, { id: '混遅2', count: 1 },
-            { id: '弥彦早', count: 1 }, { id: '弥彦遅', count: 1 },
-            { id: '特早', count: 1 }, { id: '特遅', count: 1 }
-          ];
-        } else {
-          reqs = [{ id: '夕方区分', count: 1 }];
-          const coreWeekendRoutes = ['混早1', '混早2', '混遅1', '混遅2', '特早', '特遅'];
-          coreWeekendRoutes.forEach(id => reqs.push({ id, count: 1 }));
-          const newCoreRoutes = ['弥彦早', '弥彦遅', '計画', '夕差立'];
-          newCoreRoutes.forEach(id => reqs.push({ id, count: 1 }));
-          for (let i = 1; i <= 13; i++) {
-            reqs.push({ id: `${i}区`, count: 1 });
-          }
-        }
+        this.store.state.routes.forEach(r => {
+            let count = 0;
+            if (isSunOrHol) count = r.required?.sun ?? (typeof r.required === 'number' ? r.required : 0);
+            else if (isSat) count = r.required?.sat ?? (typeof r.required === 'number' ? r.required : 0);
+            else count = r.required?.weekday ?? (typeof r.required === 'number' ? r.required : 0);
+            if (count > 0) reqs.push({ id: r.id, count });
+        });
 
         // Add Daily Overrides (Monday Augmentation)
         const daySettings = this.store.getDaySettings(col.ym, col.day);
         if (daySettings.extraRoutes) {
           daySettings.extraRoutes.forEach(routeId => {
-            reqs.push({ id: routeId, count: 1 });
+            const existing = reqs.find(r => r.id === routeId);
+            if (existing) existing.count++;
+            else reqs.push({ id: routeId, count: 1 });
           });
         }
 
@@ -971,36 +955,22 @@ export class EditorView {
       const isSunOrHol = isSun || isHol;
 
       let reqs = []; // Array of {id, count}
+      this.store.state.routes.forEach(r => {
+          let count = 0;
+          if (isSunOrHol) count = r.required?.sun ?? (typeof r.required === 'number' ? r.required : 0);
+          else if (isSat) count = r.required?.sat ?? (typeof r.required === 'number' ? r.required : 0);
+          else count = r.required?.weekday ?? (typeof r.required === 'number' ? r.required : 0);
+          if (count > 0) reqs.push({ id: r.id, count });
+      });
 
-      if (isSat) {
-        reqs = [
-          { id: '混早1', count: 1 }, { id: '混早2', count: 1 },
-          { id: '混遅1', count: 1 }, { id: '混遅2', count: 1 },
-          { id: '弥彦早', count: 1 }, { id: '弥彦遅', count: 1 },
-          { id: '特早', count: 1 }, { id: '特遅', count: 1 },
-          { id: '夕方区分', count: 1 }, { id: '1班予備', count: 1 }, { id: '2班予備', count: 1 }
-        ];
-      } else if (isSunOrHol) {
-        reqs = [
-          { id: '混早1', count: 1 }, { id: '混早2', count: 1 },
-          { id: '混遅1', count: 1 }, { id: '混遅2', count: 1 },
-          { id: '弥彦早', count: 1 }, { id: '弥彦遅', count: 1 },
-          { id: '特早', count: 1 }, { id: '特遅', count: 1 }
-        ];
-      } else {
-        // Weekday
-        reqs = [{ id: '夕方区分', count: 1 }];
-
-        const coreWeekendRoutes = ['混早1', '混早2', '混遅1', '混遅2', '特早', '特遅'];
-        coreWeekendRoutes.forEach(id => reqs.push({ id, count: 1 }));
-
-        const newCoreRoutes = ['弥彦早', '弥彦遅', '計画', '夕差立'];
-        newCoreRoutes.forEach(id => reqs.push({ id, count: 1 }));
-
-        // Standard Routes
-        for (let i = 1; i <= 13; i++) {
-          reqs.push({ id: `${i}区`, count: 1 });
-        }
+      // Add Daily Overrides (Monday Augmentation)
+      const daySettings = this.store.getDaySettings(col.ym, col.day);
+      if (daySettings.extraRoutes) {
+          daySettings.extraRoutes.forEach(routeId => {
+              const existing = reqs.find(r => r.id === routeId);
+              if (existing) existing.count++;
+              else reqs.push({ id: routeId, count: 1 });
+          });
       }
 
       // Calculate Missing Needs
