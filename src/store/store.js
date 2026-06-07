@@ -46,21 +46,21 @@ export class Store {
             { id: '13', name: '佐藤 義之', attributes: { title: '新一般' }, capabilities: [] },
             { id: '14', name: '藤田 義彦', attributes: { title: '新一般' }, capabilities: [] },
             { id: '15', name: '吉川 賢人', attributes: { title: '新一般' }, capabilities: [] },
-            { id: '16', name: '丸山 圭', attributes: { title: '新一般' }, capabilities: [] },
+            { id: '24', name: '永井 智之', attributes: { title: '新一般' }, capabilities: [] },
+            { id: '16', name: '丸山 主', attributes: { title: '新一般' }, capabilities: [] },
             { id: '17', name: '丸山 優貴', attributes: { title: '新一般' }, capabilities: [] },
             { id: '18', name: '近藤 航哉', attributes: { title: '新一般' }, capabilities: [] },
             { id: '19', name: '丸山 和弘', attributes: { title: '新一般' }, capabilities: [] },
             { id: '20', name: '五十嵐 亨', attributes: { title: '新一般' }, capabilities: [] },
             { id: '21', name: '前山 正順', attributes: { title: '新一般' }, capabilities: [] },
-            { id: '22', name: '長谷川 裕之', attributes: { title: '新一般' }, capabilities: [] },
             { id: '23', name: '今津 大翔', attributes: { title: '新一般' }, capabilities: [] },
-            { id: '24', name: '永井 智之', attributes: { title: '新一般' }, capabilities: [] },
-            { id: '25', name: '橘 茂樹', attributes: { title: '新一般' }, capabilities: [] },
+            { id: '22', name: '長谷川 裕之', attributes: { title: '新一般' }, capabilities: [] },
+            { id: '30', name: '神田 雅弥', attributes: { title: '新一般' }, capabilities: [] },
             { id: '26', name: '吉原 和美', attributes: { title: '新一般' }, capabilities: [] },
             { id: '27', name: '時田 眞弓', attributes: { title: '新一般' }, capabilities: [] },
             { id: '28', name: '小川 莉奈', attributes: { title: '新一般', maxConsecutiveWork: 6, noSunday: true }, capabilities: [] },
             { id: '29', name: '吉田 ひろみ', attributes: { title: '新一般' }, capabilities: [] },
-            { id: '30', name: '神田 雅弥', attributes: { title: '新一般' }, capabilities: [] },
+            { id: '25', name: '橘 茂樹', attributes: { title: '新一般' }, capabilities: [] },
         ];
     }
 
@@ -137,6 +137,7 @@ export class Store {
                 // Migration logic
                 this.migrateSymbols();
                 this.migrateRoutesRenames(); // New migration
+                this.migrateStaffNames(); // Fix name typos
                 this.ensureDefaults();
                 this.save();
             } catch (e) {
@@ -251,6 +252,18 @@ export class Store {
     deleteStaff(index) {
         this.state.staff.splice(index, 1);
         this.save();
+    }
+
+    migrateStaffNames() {
+        // Fix known name typos
+        const nameFixMap = {
+            '丸山 圭': '丸山 主',
+        };
+        this.state.staff.forEach(s => {
+            if (nameFixMap[s.name]) {
+                s.name = nameFixMap[s.name];
+            }
+        });
     }
 
     // --- Dynamic Routes Management ---
