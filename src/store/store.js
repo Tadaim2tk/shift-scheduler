@@ -41,6 +41,7 @@ export class Store {
             { id: '8', name: '渡邉 祐司', attributes: { title: '新一般' }, capabilities: [] },
             { id: '9', name: '相田 真吾', attributes: { title: '新一般' }, capabilities: [] },
             { id: '10', name: '渋木 愛智', attributes: { title: '新一般' }, capabilities: [] },
+            { id: '31', name: '原 生吹', attributes: { title: '新一般' }, capabilities: [] },
             { id: '11', name: '森山 正悟', attributes: { title: '新一般' }, capabilities: [] },
             { id: '12', name: '齋藤 俊輔', attributes: { title: '新一般' }, capabilities: [] },
             { id: '13', name: '佐藤 義之', attributes: { title: '新一般' }, capabilities: [] },
@@ -61,6 +62,7 @@ export class Store {
             { id: '28', name: '小川 莉奈', attributes: { title: '新一般', maxConsecutiveWork: 6, noSunday: true }, capabilities: [] },
             { id: '29', name: '吉田 ひろみ', attributes: { title: '新一般' }, capabilities: [] },
             { id: '25', name: '橘 茂樹', attributes: { title: '新一般' }, capabilities: [] },
+            { id: '32', name: '青木 豊', attributes: { title: '新一般' }, capabilities: [] },
         ];
     }
 
