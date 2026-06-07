@@ -71,32 +71,18 @@ export class Exporter {
             // 7. Generate PDF
             const imgData = canvas.toDataURL('image/png');
             
-            const imgProps = canvas; // use canvas directly for aspect calculation
-            
             // Auto-detect orientation based on aspect ratio
             const orientation = canvas.width > canvas.height ? 'landscape' : 'portrait';
             
+            // Set PDF format to match exactly the canvas pixel size to eliminate all margins
             const pdf = new jsPDF({
                 orientation: orientation,
-                unit: 'mm',
-                format: 'a4'
+                unit: 'px',
+                format: [canvas.width, canvas.height]
             });
 
-            const pdfWidth = pdf.internal.pageSize.getWidth();
-            const pdfHeight = pdf.internal.pageSize.getHeight();
-
-            const margin = 0;
-            const availableWidth = pdfWidth - (margin * 2);
-            const availableHeight = pdfHeight - (margin * 2);
-
-            // Fit to page
-            const ratio = Math.min(availableWidth / imgProps.width, availableHeight / imgProps.height);
-            const w = imgProps.width * ratio;
-            const h = imgProps.height * ratio;
-            const x = (pdfWidth - w) / 2;
-            const y = (pdfHeight - h) / 2;
-
-            pdf.addImage(imgData, 'PNG', x, y, w, h);
+            // Draw image filling the entire PDF page
+            pdf.addImage(imgData, 'PNG', 0, 0, canvas.width, canvas.height);
             pdf.save(fileName);
 
         } catch (e) {
