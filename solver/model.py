@@ -113,28 +113,34 @@ def run_optimization(request_data: Dict[str, Any]) -> Dict[str, Any]:
                     if symbol in all_route_ids:
                         model.Add(x[(s_idx, d, symbol)] == 1)
 
-    # 5. Consecutive Work Limit (Max 5 days) - HARD CONSTRAINT
+    # 5. Consecutive Work Limit (Max 5 days) - SOFT CONSTRAINT via slack
+    # ハード制約だと「解なし」になりやすいため、違反を許容しつつ目的関数で重くペナルティを課す。
+    consec_slack = {}
     for s_idx in range(num_staff):
         attrs = staff_list[s_idx].get('attributes', {})
         max_work = attrs.get('maxConsecutiveWork', 5)
         limit_days = max_work + 1 # e.g. 6 days window
-        
+
         for start_d in range(1, days_in_month - limit_days + 2):
             window = range(start_d, start_d + limit_days)
             off_shifts = []
             for wd in window:
                 for off_r in OFF_ROUTES:
                     off_shifts.append(x[(s_idx, wd, off_r)])
-                    
-            model.Add(sum(off_shifts) >= 1)
 
-    # 6. Weekly Rest Requirement (1 週休 per week) - HARD CONSTRAINT
+            # slack=1 のとき制約が緩和される（連勤超過を許容）。
+            consec_slack[(s_idx, start_d)] = model.NewBoolVar(f'consec_slack_{s_idx}_{start_d}')
+            model.Add(sum(off_shifts) + consec_slack[(s_idx, start_d)] >= 1)
+
+    # 6. Weekly Rest Requirement (1 週休 per week) - SOFT CONSTRAINT via slack
     sundays = [d for d in days if date_labels.get(str(d), {}).get("isSun", False)]
+    rest_slack = {}
     for s_idx in range(num_staff):
         for sun_d in sundays:
             week_days = [d for d in range(sun_d, sun_d + 7) if d <= days_in_month]
             if len(week_days) == 7:
-                model.Add(sum(x[(s_idx, d, '週休')] for d in week_days) >= 1)
+                rest_slack[(s_idx, sun_d)] = model.NewBoolVar(f'rest_slack_{s_idx}_{sun_d}')
+                model.Add(sum(x[(s_idx, d, '週休')] for d in week_days) + rest_slack[(s_idx, sun_d)] >= 1)
 
     # 7. Total Holiday Counts - SOFT CONSTRAINT via Slack
     shukyu_slack_under = {}
@@ -211,6 +217,13 @@ def run_optimization(request_data: Dict[str, Any]) -> Dict[str, Any]:
         objective_terms.append(shukyu_slack_over[s_idx] * -5)   # Small penalty for extra shukyu to prefer '空き'
         objective_terms.append(hiban_slack_under[s_idx] * -100)
         objective_terms.append(hiban_slack_over[s_idx] * -5)    # Small penalty for extra hiban to prefer '空き'
+
+    # 連勤上限・週休のソフト制約違反へのペナルティ。
+    # 必須シフト欠員(-500)よりは軽く、しかし通常運用では十分に強い重み。
+    for key in consec_slack:
+        objective_terms.append(consec_slack[key] * -200)   # 連勤超過のペナルティ
+    for key in rest_slack:
+        objective_terms.append(rest_slack[key] * -150)     # 週休未取得のペナルティ
     
     # Penalize the maximum work days across all staff to balance the workload
     objective_terms.append(max_work_days * -20)
@@ -249,13 +262,37 @@ def run_optimization(request_data: Dict[str, Any]) -> Dict[str, Any]:
                         objective_terms.append(x[(s_idx, d, r_id)] * -5)
 
     model.Maximize(sum(objective_terms))
-    
+
+    # ----------------------------------------------------
+    # Warm-start (solution hints)
+    # 既存スケジュール(current_schedule)を初期解のヒントとしてソルバーに与え、
+    # 探索を高速化する。ロックの有無にかかわらず有効な記号はヒントにする。
+    # ヒントは制約ではないため、矛盾していてもソルバーは無視するだけで安全。
+    # ----------------------------------------------------
+    hinted = set()
+    for s_idx, staff in enumerate(staff_list):
+        s_id = str(staff['id'])
+        if s_id not in current_schedule:
+            continue
+        for d_str, cell in current_schedule[s_id].items():
+            try:
+                d = int(d_str)
+            except (TypeError, ValueError):
+                continue
+            if d < 1 or d > days_in_month:
+                continue
+            symbol = cell.get('symbol')
+            if symbol in all_route_ids and (s_idx, d) not in hinted:
+                model.AddHint(x[(s_idx, d, symbol)], 1)
+                hinted.add((s_idx, d))
+
     # ----------------------------------------------------
     # Solve
     # ----------------------------------------------------
     solver = cp_model.CpSolver()
     solver.parameters.max_time_in_seconds = 60.0 # 60 sec timeout
-    
+    solver.parameters.num_search_workers = 8     # 並列探索でレスポンスを改善
+
     status = solver.Solve(model)
     
     if status == cp_model.OPTIMAL or status == cp_model.FEASIBLE:
