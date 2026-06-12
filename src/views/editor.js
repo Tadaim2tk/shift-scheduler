@@ -1,14 +1,12 @@
 import { Utils } from '../utils/utils.js';
 import { Generator } from '../utils/generator.js';
 import { Exporter } from '../utils/exporter.js';
-import { AIService } from '../utils/ai.js';
 import { JapaneseCalendar } from '../utils/holidays.js';
 
 export class EditorView {
   constructor() {
     this.store = window.app.store;
     this.generator = new Generator(this.store);
-    this.aiService = new AIService(this.store);
     this.currentStartDate = Utils.getCurrentStartDate();
     // Keep currentYM for internal ref or title only, but logic drives from start date
     // Or just derive it.
@@ -292,8 +290,7 @@ export class EditorView {
           <div style="display:flex; gap:10px;">
             <button id="btn-clear" class="danger outline">すべてクリア</button>
             <div class="button-group">
-              <!-- Valid IDs: btn-auto-ai, btn-auto-fill, btn-auto-full -->
-              <button id="btn-auto-ai" class="info" title="AIを使用して空き枠を埋める">✨ AI自動生成 (Beta)</button>
+              <!-- Valid IDs: btn-auto-fill, btn-auto-full -->
               <button id="btn-auto-fill" title="手動入力を保持して空き枠を埋める">✨ 空き枠を自動入力</button>
               <button id="btn-auto-full" class="warning" title="ロックされていないセルをクリアして全体を再構築">🔒 リセット＆再構築</button>
             </div>
@@ -498,33 +495,6 @@ export class EditorView {
     addListener('#btn-home', 'click', () => { window.location.hash = 'home'; });
 
     // Buttons - FIXED IDs
-    addListener('#btn-auto-ai', 'click', async () => {
-      const btn = container.querySelector('#btn-auto-ai');
-      btn.innerText = 'Calculating...';
-      btn.disabled = true;
-      try {
-        const ranges = this.getVisibleRangeInfo();
-        const staffList = this.store.state.staff;
-        const constraints = { consecutiveLimit: this.store.state.settings.consecutiveLimit };
-        for (const range of ranges) {
-          const sch = this.store.getSchedule(range.ym);
-          const updates = await this.aiService.fillGaps(range.ym, staffList, sch, constraints);
-          const finalSch = JSON.parse(JSON.stringify(sch || {}));
-          updates.forEach(assign => {
-            if (assign.day < range.startDay || assign.day > range.endDay) return;
-            if (!finalSch[assign.staffId]) finalSch[assign.staffId] = {};
-            if (!finalSch[assign.staffId][String(assign.day).padStart(2, '0')]) {
-              finalSch[assign.staffId][String(assign.day).padStart(2, '0')] = {
-                symbol: assign.symbol, type: 'WORK', auto: true
-              };
-            }
-          });
-          this.store.updateSchedule(range.ym, finalSch);
-        }
-        window.location.reload();
-      } catch (e) { alert(e.message); btn.disabled = false; }
-    });
-
     const runOptimization = async (btnId, preserveAll, originalText) => {
       const { SolverAPI } = await import('../api/solver_api.js');
       const ranges = this.getVisibleRangeInfo();

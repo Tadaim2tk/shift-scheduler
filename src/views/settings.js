@@ -39,12 +39,6 @@ export class SettingsView {
       <!-- System Reset Section (Moved inside updateUI to persist) -->
       <div style="margin-top: 2rem; border-top: 1px solid #444; padding-top: 1rem;">
           <h3>System / Data</h3>
-          
-          <div style="margin-bottom: 1rem;">
-            <label style="font-weight:bold;">Gemini API Key: </label>
-            <input type="password" id="sys-api-key" value="${this.store.state.settings.apiKey || ''}" style="width: 300px;" placeholder="Paste Gemini API Key here...">
-            <button id="btn-save-key" class="primary small" style="margin-left: 10px;">Save Key</button>
-          </div>
 
           <button id="btn-reset-data" class="danger outline">⚠️ Reset Data to Defaults</button>
       </div>
@@ -71,20 +65,6 @@ export class SettingsView {
 
     // Reset Modal Logic
     const resetModal = this.container.querySelector('#reset-confirm-modal');
-
-    // API Key Save
-    const keyInput = this.container.querySelector('#sys-api-key');
-    this.container.querySelector('#btn-save-key').onclick = (e) => {
-      this.store.updateSettings({ apiKey: keyInput.value });
-      const btn = e.target;
-      const originalText = btn.innerText;
-      btn.innerText = 'Saved!';
-      btn.disabled = true;
-      setTimeout(() => {
-        btn.innerText = originalText;
-        btn.disabled = false;
-      }, 1500);
-    };
 
     this.container.querySelector('#btn-reset-data').onclick = () => {
       resetModal.classList.remove('hidden');
