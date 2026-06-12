@@ -8,6 +8,7 @@ export class EditorView {
     this.store = window.app.store;
     this.generator = new Generator(this.store);
     this.currentStartDate = Utils.getCurrentStartDate();
+    this.periodDays = Utils.getCurrentPeriodDays();
     // Keep currentYM for internal ref or title only, but logic drives from start date
     // Or just derive it.
   }
@@ -19,21 +20,47 @@ export class EditorView {
     this.onMount();
   }
 
-  prevMonth() {
+  // 矢印ナビ：現在の期間日数ぶんだけ前後にずらす（任意期間でも「次の区間」を表示）。
+  shiftRange(deltaDays) {
     const [y, m, d] = this.currentStartDate.split('-').map(Number);
     const date = new Date(y, m - 1, d);
-    date.setDate(date.getDate() - 28);
+    date.setDate(date.getDate() + deltaDays);
     this.currentStartDate = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
     Utils.saveCurrentStartDate(this.currentStartDate);
     this.refresh();
   }
 
+  prevMonth() {
+    this.shiftRange(-this.periodDays);
+  }
+
   nextMonth() {
-    const [y, m, d] = this.currentStartDate.split('-').map(Number);
-    const date = new Date(y, m - 1, d);
-    date.setDate(date.getDate() + 28);
-    this.currentStartDate = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
-    Utils.saveCurrentStartDate(this.currentStartDate);
+    this.shiftRange(this.periodDays);
+  }
+
+  // 起点・終点を任意の区間に変更する。終点は含む（inclusive）。
+  setCustomRange(startStr, endStr) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(startStr) || !/^\d{4}-\d{2}-\d{2}$/.test(endStr)) {
+      alert('日付の形式が不正です。');
+      return;
+    }
+    const [sy, sm, sd] = startStr.split('-').map(Number);
+    const [ey, em, ed] = endStr.split('-').map(Number);
+    const start = new Date(sy, sm - 1, sd);
+    const end = new Date(ey, em - 1, ed);
+    const days = Math.round((end - start) / 86400000) + 1;
+    if (days < 1) {
+      alert('終了日は開始日以降にしてください。');
+      return;
+    }
+    if (days > Utils.MAX_PERIOD_DAYS) {
+      alert(`期間が長すぎます（最大 ${Utils.MAX_PERIOD_DAYS} 日）。`);
+      return;
+    }
+    this.currentStartDate = startStr;
+    this.periodDays = days;
+    Utils.saveCurrentStartDate(startStr);
+    Utils.saveCurrentPeriodDays(days);
     this.refresh();
   }
   getVisibleRangeInfo() {
@@ -41,7 +68,7 @@ export class EditorView {
     const startDate = new Date(sy, sm - 1, sd);
     const ranges = {}; // ym -> {min, max}
 
-    for (let i = 0; i < 28; i++) {
+    for (let i = 0; i < this.periodDays; i++) {
       const d = new Date(startDate);
       d.setDate(d.getDate() + i);
       const y = d.getFullYear();
@@ -66,18 +93,20 @@ export class EditorView {
       const [sy, sm, sd] = (this.currentStartDate || Utils.getCurrentStartDate()).split('-').map(Number);
       const startDate = new Date(sy, sm - 1, sd);
 
-      // Calculate End Date for display (28 days later - 1)
+      // Calculate End Date for display (期間日数ぶん先 - 1, inclusive)
       const endDate = new Date(startDate);
-      endDate.setDate(endDate.getDate() + 27);
+      endDate.setDate(endDate.getDate() + (this.periodDays - 1));
       const endY = endDate.getFullYear();
       const endM = endDate.getMonth() + 1;
       const endD = endDate.getDate();
 
-      const rangeTitle = `${sy}-${String(sm).padStart(2, '0')}-${String(sd).padStart(2, '0')} ～ ${endY}-${String(endM).padStart(2, '0')}-${String(endD).padStart(2, '0')}`;
+      const startISO = `${sy}-${String(sm).padStart(2, '0')}-${String(sd).padStart(2, '0')}`;
+      const endISO = `${endY}-${String(endM).padStart(2, '0')}-${String(endD).padStart(2, '0')}`;
+      const rangeTitle = `${startISO} ～ ${endISO}（${this.periodDays}日）`;
 
-      // Build 28 Columns
+      // Build columns for the selected period
       const columns = [];
-      for (let i = 0; i < 28; i++) {
+      for (let i = 0; i < this.periodDays; i++) {
         const d = new Date(startDate);
         d.setDate(d.getDate() + i);
         const y = d.getFullYear();
@@ -286,6 +315,12 @@ export class EditorView {
                 </span>
                 <button id="btn-next-month">▶</button>
              </div>
+             <div class="range-editor" style="display:flex; gap:6px; align-items:center; font-size:0.85em;">
+                <input type="date" id="range-start" value="${startISO}" style="padding:4px;">
+                <span>〜</span>
+                <input type="date" id="range-end" value="${endISO}" style="padding:4px;">
+                <button id="btn-apply-range" class="small">期間を適用</button>
+             </div>
           </div>
           <div style="display:flex; gap:10px;">
             <button id="btn-clear" class="danger outline">すべてクリア</button>
@@ -492,6 +527,11 @@ export class EditorView {
     // Nav
     addListener('#btn-prev-month', 'click', () => this.prevMonth());
     addListener('#btn-next-month', 'click', () => this.nextMonth());
+    addListener('#btn-apply-range', 'click', () => {
+      const startEl = container.querySelector('#range-start');
+      const endEl = container.querySelector('#range-end');
+      if (startEl && endEl) this.setCustomRange(startEl.value, endEl.value);
+    });
     addListener('#btn-home', 'click', () => { window.location.hash = 'home'; });
 
     // Buttons - FIXED IDs
@@ -869,13 +909,13 @@ export class EditorView {
     const tfoot = table.querySelector('tfoot');
     if (!tfoot) return;
 
-    // 4-Week Cycle Logic for Footer
+    // Footer logic for the selected period
     const [sy, sm, sd] = (this.currentStartDate || Utils.getCurrentStartDate()).split('-').map(Number);
     const startDate = new Date(sy, sm - 1, sd);
 
-    // Build 28 Columns
+    // Build columns for the selected period
     const columns = [];
-    for (let i = 0; i < 28; i++) {
+    for (let i = 0; i < this.periodDays; i++) {
       const d = new Date(startDate);
       d.setDate(d.getDate() + i);
       const y = d.getFullYear();

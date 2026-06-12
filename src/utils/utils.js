@@ -25,5 +25,15 @@ export const Utils = {
     },
     saveCurrentStartDate: (dateStr) => {
         localStorage.setItem('shift_scheduler_start_date', dateStr);
+    },
+    // 表示する期間の日数（起点からの日数）。既定は28日（従来の4週間）。
+    MAX_PERIOD_DAYS: 62,
+    getCurrentPeriodDays: () => {
+        const stored = parseInt(localStorage.getItem('shift_scheduler_period_days'), 10);
+        if (Number.isInteger(stored) && stored >= 1 && stored <= 62) return stored;
+        return 28;
+    },
+    saveCurrentPeriodDays: (n) => {
+        localStorage.setItem('shift_scheduler_period_days', String(n));
     }
 };
