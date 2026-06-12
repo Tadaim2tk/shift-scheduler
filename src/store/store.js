@@ -29,80 +29,90 @@ export class Store {
     }
 
     getInitialStaff() {
+        // 並び順・役職(title)・班(group)の初期値はユーザー指定の社員ステータス画面に合わせる。
+        // 各社員のid・capabilities・特殊attributes(連勤上限/日祝不可など)は従来の既定を保持する。
         return [
-            { id: '1', name: '虎谷 秀一', attributes: { title: '課長', group: '一斑' }, capabilities: ['1区', '2区', '3区', '混早1', '混早2', '1班予備', '2班予備', '弥彦予備'] },
+            // 内務班（先頭）
+            { id: '12', name: '齋藤 俊輔', attributes: { title: '課長', group: '内務班' }, capabilities: [] },
+
+            // 一斑
+            { id: '1', name: '虎谷 秀一', attributes: { title: '課長代理', group: '一斑' }, capabilities: ['1区', '2区', '3区', '混早1', '混早2', '1班予備', '2班予備', '弥彦予備'] },
             { id: '2', name: '山本 清一', attributes: { title: '主任', group: '一斑' }, capabilities: ['3K', '5K', '6K', '特早', '特遅', '混早1', '混早2', '弥彦予備'] },
-            { id: '3', name: '狩谷 朋紀', attributes: { title: '新一般' }, capabilities: [] },
-            { id: '4', name: '佐藤 了', attributes: { title: '新一般' }, capabilities: [] },
-            { id: '5', name: '平出 貴一', attributes: { title: '新一般' }, capabilities: [] },
-            { id: '6', name: '土田 真斗唯', attributes: { title: '新一般' }, capabilities: [] },
-            { id: '7', name: '笹川 巧', attributes: { title: '新一般' }, capabilities: ['1班予備', '2班予備', '弥彦予備'] },
-            { id: '8', name: '渡邉 祐司', attributes: { title: '新一般' }, capabilities: [] },
-            { id: '9', name: '相田 真吾', attributes: { title: '新一般' }, capabilities: [] },
-            { id: '10', name: '渋木 愛智', attributes: { title: '新一般' }, capabilities: [] },
-            { id: '31', name: '原 生吹', attributes: { title: '新一般' }, capabilities: [] },
-            { id: '11', name: '森山 正悟', attributes: { title: '新一般' }, capabilities: [] },
-            { id: '12', name: '齋藤 俊輔', attributes: { title: '新一般' }, capabilities: [] },
-            { id: '13', name: '佐藤 義之', attributes: { title: '新一般' }, capabilities: [] },
-            { id: '14', name: '藤田 義彦', attributes: { title: '新一般' }, capabilities: [] },
-            { id: '15', name: '吉川 賢人', attributes: { title: '新一般' }, capabilities: [] },
-            { id: '24', name: '永井 智之', attributes: { title: '新一般' }, capabilities: [] },
-            { id: '16', name: '丸山 主', attributes: { title: '新一般' }, capabilities: [] },
-            { id: '17', name: '丸山 優貴', attributes: { title: '新一般' }, capabilities: [] },
-            { id: '18', name: '近藤 航哉', attributes: { title: '新一般' }, capabilities: [] },
-            { id: '19', name: '丸山 和弘', attributes: { title: '新一般' }, capabilities: [] },
-            { id: '20', name: '五十嵐 亨', attributes: { title: '新一般' }, capabilities: [] },
-            { id: '21', name: '前山 正順', attributes: { title: '新一般' }, capabilities: [] },
-            { id: '23', name: '今津 大翔', attributes: { title: '新一般' }, capabilities: [] },
-            { id: '22', name: '長谷川 裕之', attributes: { title: '新一般' }, capabilities: [] },
-            { id: '30', name: '神田 雅弥', attributes: { title: '新一般' }, capabilities: [] },
-            { id: '26', name: '吉原 和美', attributes: { title: '新一般' }, capabilities: [] },
-            { id: '27', name: '時田 眞弓', attributes: { title: '新一般' }, capabilities: [] },
-            { id: '28', name: '小川 莉奈', attributes: { title: '新一般', maxConsecutiveWork: 6, noSunday: true }, capabilities: [] },
-            { id: '29', name: '吉田 ひろみ', attributes: { title: '新一般' }, capabilities: [] },
-            { id: '25', name: '橘 茂樹', attributes: { title: '新一般' }, capabilities: [] },
-            { id: '32', name: '青木 豊', attributes: { title: '新一般' }, capabilities: [] },
+            { id: '3', name: '狩谷 朋紀', attributes: { title: '主任', group: '一斑' }, capabilities: [] },
+            { id: '4', name: '佐藤 了', attributes: { title: '主任', group: '一斑' }, capabilities: [] },
+            { id: '32', name: '青木 豊', attributes: { title: '主任', group: '一斑' }, capabilities: [] },
+            { id: '5', name: '平出 貴一', attributes: { title: '新一般', group: '一斑' }, capabilities: [] },
+            { id: '6', name: '土田 真斗唯', attributes: { title: '新一般', group: '一斑' }, capabilities: [] },
+            { id: '10', name: '渋木 愛智', attributes: { title: '新一般', group: '一斑' }, capabilities: [] },
+            { id: '7', name: '笹川 巧', attributes: { title: '期間雇用', group: '一斑' }, capabilities: ['1班予備', '2班予備', '弥彦予備'] },
+            { id: '8', name: '渡邉 祐司', attributes: { title: '期間雇用', group: '一斑' }, capabilities: [] },
+            { id: '9', name: '相田 真吾', attributes: { title: '期間雇用', group: '一斑' }, capabilities: [] },
+            { id: '31', name: '原 生吹', attributes: { title: '期間雇用', group: '一斑' }, capabilities: [] },
+
+            // 二班
+            { id: '13', name: '佐藤 義之', attributes: { title: '課長代理', group: '二班' }, capabilities: [] },
+            { id: '14', name: '藤田 義彦', attributes: { title: '主任', group: '二班' }, capabilities: [] },
+            { id: '15', name: '吉川 賢人', attributes: { title: '地域基幹', group: '二班' }, capabilities: [] },
+            { id: '24', name: '永井 智之', attributes: { title: '新一般', group: '二班' }, capabilities: [] },
+            { id: '16', name: '丸山 主', attributes: { title: '新一般', group: '二班' }, capabilities: [] },
+            { id: '17', name: '丸山 優貴', attributes: { title: '新一般', group: '二班' }, capabilities: [] },
+            { id: '18', name: '近藤 航哉', attributes: { title: '新一般', group: '二班' }, capabilities: [] },
+            { id: '19', name: '丸山 和弘', attributes: { title: '期間雇用', group: '二班' }, capabilities: [] },
+            { id: '20', name: '五十嵐 亨', attributes: { title: '期間雇用', group: '二班' }, capabilities: [] },
+            { id: '21', name: '前山 正順', attributes: { title: '期間雇用', group: '二班' }, capabilities: [] },
+            { id: '23', name: '今津 大翔', attributes: { title: '期間雇用', group: '二班' }, capabilities: [] },
+            { id: '22', name: '長谷川 裕之', attributes: { title: '期間雇用', group: '二班' }, capabilities: [] },
+            { id: '11', name: '森山 正悟', attributes: { title: '期間雇用', group: '二班' }, capabilities: [] },
+
+            // 内務班
+            { id: '26', name: '吉原 和美', attributes: { title: '期間雇用', group: '内務班' }, capabilities: [] },
+            { id: '27', name: '時田 眞弓', attributes: { title: '期間雇用', group: '内務班' }, capabilities: [] },
+            { id: '28', name: '小川 莉奈', attributes: { title: '期間雇用', group: '内務班', maxConsecutiveWork: 6, noSunday: true }, capabilities: [] },
+            { id: '29', name: '吉田 ひろみ', attributes: { title: '期間雇用', group: '内務班' }, capabilities: [] },
+            { id: '25', name: '橘 茂樹', attributes: { title: '課長', group: '内務班' }, capabilities: [] },
+
+            // 一斑（末尾）
+            { id: '30', name: '神田 雅弥', attributes: { title: '地域基幹', group: '一斑' }, capabilities: [] },
         ];
     }
 
     getInitialRoutes() {
-        // User requested specific order
+        // 並び順・配置する曜日(required)の初期値はユーザー指定の画面に合わせる。
+        // required の各値は「配置する曜日」のチェック状態に対応（1=配置, 0=なし）。
         const routes = [
-            // Block 1
-            { id: '1区', name: '1区', required: { weekday: 1, sat: 1, sun: 1 } },
-            { id: '2区', name: '2区', required: { weekday: 1, sat: 1, sun: 1 } },
-            { id: '3区', name: '3区', required: { weekday: 1, sat: 1, sun: 1 } },
-            { id: '4区', name: '4区', required: { weekday: 1, sat: 1, sun: 1 } },
-            { id: '5区', name: '5区', required: { weekday: 1, sat: 1, sun: 1 } },
-            { id: '6区', name: '6区', required: { weekday: 1, sat: 1, sun: 1 } },
+            // 通区 1〜13区（平日のみ配置）
+            { id: '1区', name: '1区', required: { weekday: 1, sat: 0, sun: 0 } },
+            { id: '2区', name: '2区', required: { weekday: 1, sat: 0, sun: 0 } },
+            { id: '3区', name: '3区', required: { weekday: 1, sat: 0, sun: 0 } },
+            { id: '4区', name: '4区', required: { weekday: 1, sat: 0, sun: 0 } },
+            { id: '5区', name: '5区', required: { weekday: 1, sat: 0, sun: 0 } },
+            { id: '6区', name: '6区', required: { weekday: 1, sat: 0, sun: 0 } },
+            { id: '7区', name: '7区', required: { weekday: 1, sat: 0, sun: 0 } },
+            { id: '8区', name: '8区', required: { weekday: 1, sat: 0, sun: 0 } },
+            { id: '9区', name: '9区', required: { weekday: 1, sat: 0, sun: 0 } },
+            { id: '10区', name: '10区', required: { weekday: 1, sat: 0, sun: 0 } },
+            { id: '11区', name: '11区', required: { weekday: 1, sat: 0, sun: 0 } },
+            { id: '12区', name: '12区', required: { weekday: 1, sat: 0, sun: 0 } },
+            { id: '13区', name: '13区', required: { weekday: 1, sat: 0, sun: 0 } },
 
-            // Block 2 (Group 1 Extras)
-            { id: '1班予備', name: '1班予備', required: { weekday: 1, sat: 1, sun: 1 } },
-            { id: '混早1', name: '混早1', required: { weekday: 1, sat: 1, sun: 1 } },
-            { id: '混遅1', name: '混遅1', required: { weekday: 1, sat: 1, sun: 1 } },
-            { id: '混中1', name: '混中1', required: { weekday: 1, sat: 1, sun: 1 } },
-
-            // Block 3
-            { id: '7区', name: '7区', required: { weekday: 1, sat: 1, sun: 1 } },
-            { id: '8区', name: '8区', required: { weekday: 1, sat: 1, sun: 1 } },
-            { id: '9区', name: '9区', required: { weekday: 1, sat: 1, sun: 1 } },
-            { id: '10区', name: '10区', required: { weekday: 1, sat: 1, sun: 1 } },
-
-            // Block 4 (Group 2 Extras)
-            { id: '2班予備', name: '2班予備', required: { weekday: 1, sat: 1, sun: 1 } },
-            { id: '混早2', name: '混早2', required: { weekday: 1, sat: 1, sun: 1 } },
-            { id: '混遅2', name: '混遅2', required: { weekday: 1, sat: 1, sun: 1 } },
-            { id: '混中2', name: '混中2', required: { weekday: 1, sat: 1, sun: 1 } },
-
-            // Block 5
-            { id: '11区', name: '11区', required: { weekday: 1, sat: 1, sun: 1 } },
-            { id: '12区', name: '12区', required: { weekday: 1, sat: 1, sun: 1 } },
-            { id: '13区', name: '13区', required: { weekday: 1, sat: 1, sun: 1 } },
+            // 予備（既定では配置なし）
+            { id: '1班予備', name: '1班予備', required: { weekday: 0, sat: 0, sun: 0 } },
+            { id: '2班予備', name: '2班予備', required: { weekday: 0, sat: 0, sun: 0 } },
             { id: '弥彦予備', name: '弥彦予備', required: { weekday: 0, sat: 0, sun: 0 } },
+
+            // 混（早:全日 / 遅:平土 / 中:日祝のみ）
+            { id: '混早1', name: '混早1', required: { weekday: 1, sat: 1, sun: 1 } },
+            { id: '混早2', name: '混早2', required: { weekday: 1, sat: 1, sun: 1 } },
+            { id: '混遅1', name: '混遅1', required: { weekday: 1, sat: 1, sun: 0 } },
+            { id: '混遅2', name: '混遅2', required: { weekday: 1, sat: 1, sun: 0 } },
+            { id: '混中1', name: '混中1', required: { weekday: 0, sat: 0, sun: 1 } },
+            { id: '混中2', name: '混中2', required: { weekday: 0, sat: 0, sun: 1 } },
+
+            // 弥彦（早遅とも全日）
             { id: '弥彦早', name: '弥彦早', required: { weekday: 1, sat: 1, sun: 1 } },
             { id: '弥彦遅', name: '弥彦遅', required: { weekday: 1, sat: 1, sun: 1 } },
 
-            // Block 6 (Specials)
+            // 特・計画・夕方
             { id: '特早', name: '特早', required: { weekday: 1, sat: 1, sun: 1 } },
             { id: '特遅', name: '特遅', required: { weekday: 1, sat: 1, sun: 1 } },
             { id: '計画', name: '計画', required: { weekday: 1, sat: 0, sun: 0 } },
