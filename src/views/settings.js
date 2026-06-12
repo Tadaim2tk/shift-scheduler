@@ -245,7 +245,11 @@ export class SettingsView {
             <!-- Modal for Route Staff -->
             <div id="route-staff-modal" class="modal hidden" style="position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);display:flex;justify-content:center;align-items:center;">
               <div class="card" style="min-width:300px; max-height: 80vh; overflow-y: auto;">
-                  <h3 id="route-staff-modal-title">担当社員の設定</h3>
+                  <div style="display:flex; justify-content:space-between; align-items:center; gap:8px;">
+                      <button id="route-staff-prev" class="small outline" title="前の担務へ">◀ 前</button>
+                      <h3 id="route-staff-modal-title" style="margin:0; text-align:center; flex:1;">担当社員の設定</h3>
+                      <button id="route-staff-next" class="small outline" title="次の担務へ">次 ▶</button>
+                  </div>
                   <div id="route-staff-modal-list" style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 1rem 0;"></div>
                   <div class="flex justify-between">
                       <button id="route-staff-modal-close" class="outline">Cancel</button>
@@ -627,12 +631,8 @@ export class SettingsView {
         });
     }, 10);
 
-    // Save
-    const saveBtn = this.container.querySelector('#route-staff-modal-save');
-    const newSaveBtn = saveBtn.cloneNode(true);
-    saveBtn.parentNode.replaceChild(newSaveBtn, saveBtn);
-
-    newSaveBtn.addEventListener('click', () => {
+    // 現在モーダルのチェック状態を社員のスキルへ反映（保存ボタン・前後ナビ共通）
+    const applyEdits = () => {
         const newStaffList = JSON.parse(JSON.stringify(this.store.state.staff)); // deep copy
 
         newStaffList.forEach(s => {
@@ -664,9 +664,23 @@ export class SettingsView {
         });
 
         this.store.updateStaff(newStaffList);
+    };
+
+    // Save（保存して閉じる）。.onclick で都度上書きするため再オープンでも多重登録しない。
+    const saveBtn = this.container.querySelector('#route-staff-modal-save');
+    saveBtn.onclick = () => {
+        applyEdits();
         modal.classList.add('hidden');
         this.updateUI();
-    });
+    };
+
+    // 前/次の担務へ：現在の編集を保存してから隣の担務を開く（ワンクリックで連続編集）。
+    // 端では反対側へループする。
+    const totalRoutes = this.store.state.routes.length;
+    const prevBtn = this.container.querySelector('#route-staff-prev');
+    const nextBtn = this.container.querySelector('#route-staff-next');
+    prevBtn.onclick = () => { applyEdits(); this.openRouteStaffModal((idx - 1 + totalRoutes) % totalRoutes); };
+    nextBtn.onclick = () => { applyEdits(); this.openRouteStaffModal((idx + 1) % totalRoutes); };
 
     // Close
     const closeBtn = this.container.querySelector('#route-staff-modal-close');
