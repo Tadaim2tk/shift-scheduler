@@ -15,6 +15,7 @@ export class Exporter {
         try {
             // 1. Create a "Print Container" to render the full table off-screen
             const printContainer = document.createElement('div');
+            printContainer.id = 'pdf-print-container';
             printContainer.style.position = 'absolute';
             printContainer.style.top = '-9999px';
             printContainer.style.left = '0';
@@ -44,6 +45,26 @@ export class Exporter {
             stickies.forEach(el => {
                 el.style.position = 'static';
             });
+
+            // 3b. Force a white-paper / black-ink style for printing (インク節約).
+            // !important rules override the dark-theme computed styles and any inline
+            // cell colors so the exported PDF is plain black text on white.
+            const printStyle = document.createElement('style');
+            printStyle.textContent = `
+                #pdf-print-container, #pdf-print-container * {
+                    background: #ffffff !important;
+                    background-color: #ffffff !important;
+                    background-image: none !important;
+                    color: #000000 !important;
+                    box-shadow: none !important;
+                    text-shadow: none !important;
+                }
+                #pdf-print-container th,
+                #pdf-print-container td {
+                    border-color: #000000 !important;
+                }
+            `;
+            printContainer.appendChild(printStyle);
 
             // 4. Inject Title into the clone (HTML Rendering fixes Mojibake)
             const titleDiv = document.createElement('h2');
