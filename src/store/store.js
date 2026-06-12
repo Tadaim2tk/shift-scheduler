@@ -11,8 +11,7 @@ export class Store {
             symbols: this.getInitialSymbols(),
             schedule: {},
             settings: {
-                consecutiveLimit: 5,
-                apiKey: '***REMOVED-GEMINI-KEY***'
+                consecutiveLimit: 5
             },
             daySettings: {} // { YM: { day: { extraRoutes: [] } } }
         };
@@ -131,10 +130,6 @@ export class Store {
             try {
                 const parsed = JSON.parse(data);
                 this.state = { ...this.state, ...parsed };
-
-                // FORCE API Key to the known working one for now to debug
-                this.state.settings.apiKey = '***REMOVED-GEMINI-KEY***';
-                console.log('Store: Force-loaded API Key:', this.state.settings.apiKey);
 
                 // Migration logic
                 this.migrateSymbols();
