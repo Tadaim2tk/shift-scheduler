@@ -102,10 +102,19 @@ export class SettingsView {
             <button id="btn-bulk-add" style="white-space: nowrap;">社員を追加</button>
           </div>
           
-          <table style="width: 100%; border-collapse: collapse; margin-top: 1rem;">
+          <div style="overflow-x: auto; -webkit-overflow-scrolling: touch;">
+          <table style="width: 100%; min-width: 680px; table-layout: fixed; border-collapse: collapse; margin-top: 1rem;">
+            <colgroup>
+              <col style="width: 36px;">
+              <col style="width: 30%;">
+              <col style="width: 17%;">
+              <col style="width: 15%;">
+              <col style="width: 18%;">
+              <col style="width: 14%;">
+            </colgroup>
             <thead>
               <tr style="text-align: left; border-bottom: 2px solid #ddd;">
-                <th style="width: 30px;"></th>
+                <th></th>
                 <th>Name</th>
                 <th>Title (役職)</th>
                 <th>Group (斑)</th>
@@ -133,36 +142,37 @@ export class SettingsView {
         };
 
         return `
-                <tr class="draggable-row" draggable="true" data-type="staff" data-idx="${idx}" style="border-bottom: 1px solid #eee; cursor: grab;">
-                  <td style="padding: 8px; text-align: center; color: #888;">≡</td>
+                <tr class="draggable-row" data-type="staff" data-idx="${idx}" style="border-bottom: 1px solid #eee;">
+                  <td class="drag-handle" style="padding: 8px; text-align: center; color: #888; cursor: grab; touch-action: none;" title="ドラッグで並び替え">≡</td>
                   <td style="padding: 8px;">
                     <input type="text" value="${s.name}" data-idx="${idx}" class="staff-name-input" style="width: 100%;">
                   </td>
-                  <td>
-                    <select data-idx="${idx}" class="staff-title-input">
+                  <td style="padding: 8px 4px;">
+                    <select data-idx="${idx}" class="staff-title-input" style="width: 100%;">
                       ${renderOptions()}
                     </select>
                   </td>
-                  <td>
-                    <select data-idx="${idx}" class="staff-group-input">
+                  <td style="padding: 8px 4px;">
+                    <select data-idx="${idx}" class="staff-group-input" style="width: 100%;">
                        <option value="">(None)</option>
                        ${this.store.getGroups().map(g => `<option value="${g}" ${s.attributes?.group === g ? 'selected' : ''}>${g}</option>`).join('')}
                     </select>
                   </td>
-                  <td>
-                    <button class="small outline" onclick="window.app.settings.openCapabilityModal(${idx})">
+                  <td style="padding: 8px 4px;">
+                    <button class="small outline" style="width: 100%; white-space: nowrap;" onclick="window.app.settings.openCapabilityModal(${idx})">
                         ${s.capabilities && s.capabilities.length > 0 ? s.capabilities.length + ' routes' : 'Set Routes'}
                     </button>
                   </td>
-                  <td>
-                    <button class="danger small" data-idx="${idx}">🗑️ 削除</button>
+                  <td style="padding: 8px 4px;">
+                    <button class="danger small" style="width: 100%; white-space: nowrap;" data-idx="${idx}">🗑️ 削除</button>
                   </td>
                 </tr>
               `;
       }).join('')}
             </tbody>
           </table>
-          
+          </div>
+
           <!-- Modal for Capabilities -->
           <div id="cap-modal" class="modal hidden" style="position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);display:flex;justify-content:center;align-items:center;">
             <div class="card" style="min-width:300px; max-height: 80vh; overflow-y: auto;">
@@ -197,8 +207,8 @@ export class SettingsView {
                 </thead>
                 <tbody id="routes-tbody">
                     ${routes.map((r, idx) => `
-                        <tr class="draggable-route" data-idx="${idx}" style="border-bottom: 1px solid #eee; cursor: grab;">
-                            <td style="padding: 8px; text-align: center; color: #888;">≡</td>
+                        <tr class="draggable-route" data-idx="${idx}" style="border-bottom: 1px solid #eee;">
+                            <td class="route-drag-handle" style="padding: 8px; text-align: center; color: #888; cursor: grab; touch-action: none;" title="ドラッグで並び替え">≡</td>
                             <td style="padding: 8px;">
                                 <input class="route-input" data-field="id" data-idx="${idx}" value="${r.id}" style="width:100%;">
                             </td>
@@ -398,7 +408,7 @@ export class SettingsView {
         if (staffTbody) {
             new Sortable(staffTbody, {
                 animation: 150,
-                handle: '.draggable-row',
+                handle: '.drag-handle',
                 onEnd: (evt) => {
                     const list = [...this.store.state.staff];
                     const item = list.splice(evt.oldIndex, 1)[0];
@@ -414,7 +424,7 @@ export class SettingsView {
         if (routesTbody) {
             new Sortable(routesTbody, {
                 animation: 150,
-                handle: '.draggable-route',
+                handle: '.route-drag-handle',
                 onEnd: (evt) => {
                     const list = [...this.store.state.routes];
                     const item = list.splice(evt.oldIndex, 1)[0];
