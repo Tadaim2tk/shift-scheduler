@@ -5,6 +5,14 @@ export class ShiftConstraints {
         this.routes = store.state.routes;
     }
 
+    // 連勤上限を設定から取得（社員個別 > 全体設定）。store を唯一の出所とする。
+    getMaxConsecutive(staff) {
+        if (this.store && typeof this.store.getMaxConsecutiveWork === 'function') {
+            return this.store.getMaxConsecutiveWork(staff);
+        }
+        return this.store?.state?.settings?.maxConsecutiveWork ?? 5;
+    }
+
     // Evaluate constraints for a specific staff member's schedule
     validateStaff(staffId, schedule, daysInMonth) {
         const issues = [];
@@ -15,22 +23,24 @@ export class ShiftConstraints {
             dayMap[parseInt(d)] = cell;
         });
 
-        // 1. 4-Week 8-Off (Simplified to 2 days off per week avg, or strict 4w check?)
-        // Rules vary, but standard is "4w8d off". We'll check sliding window or strict blocks if start date known.
-        // For simplicity in this monthly view: Check if total OFF days >= 8 (assuming 1 month ~ 4 weeks).
+        const staffObj = (this.store.state.staff || []).find(s => String(s.id) === String(staffId));
+        const minOff = this.store?.state?.settings?.minOffPer4Weeks ?? 8;
+        const maxConsecutive = this.getMaxConsecutive(staffObj);
+
+        // 1. 4-Week minimum off days (default 4w8d off).
         const offCount = dayMap.filter(c => c && this.isOff(c.symbol)).length;
-        if (offCount < 8) {
-            issues.push({ type: 'error', msg: `休日不足: ${offCount}/8日` });
+        if (offCount < minOff) {
+            issues.push({ type: 'error', msg: `休日不足: ${offCount}/${minOff}日` });
         }
 
-        // 2. Continuous Work Limit (Max 6 days usually? Japan Post might range 6-12 depending on agreement, assuming 6 standard)
+        // 2. Continuous Work Limit (設定値 maxConsecutiveWork を超えたら警告)
         let consecutiveWork = 0;
         for (let i = 1; i <= daysInMonth; i++) {
             const cell = dayMap[i];
             if (cell && this.isWork(cell.symbol)) {
                 consecutiveWork++;
-                if (consecutiveWork > 6) {
-                    issues.push({ type: 'warning', msg: `${i}日に連勤超過(${consecutiveWork})` });
+                if (consecutiveWork > maxConsecutive) {
+                    issues.push({ type: 'warning', msg: `${i}日に連勤超過(${consecutiveWork}/${maxConsecutive})` });
                 }
             } else {
                 consecutiveWork = 0;
@@ -38,14 +48,12 @@ export class ShiftConstraints {
         }
 
         // 3. Interval Rules (Late -> Early prohibited, Night -> Dawn -> Off enforced)
-        // Need to define shift types: Early(混早), Late(混遅), Night(夜), Dawn(明)
         for (let i = 1; i < daysInMonth; i++) {
             const current = dayMap[i];
             const next = dayMap[i + 1];
             if (!current || !next) continue;
 
             // Pattern: Night -> Dawn (Check if Night is followed by Dawn)
-            // Implementation: define types in Settings or hardcode for now based on names
             if (this.isNight(current.symbol) && !this.isDawn(next.symbol)) {
                 issues.push({ type: 'error', msg: `${i}日: 夜勤の次は明け（明）である必要があります` });
             }
@@ -56,7 +64,6 @@ export class ShiftConstraints {
             }
 
             // Interval: Late -> Early (Example: Mixed Late -> Early)
-            // Assuming 混遅 -> 混早 is bad
             if (this.isLate(current.symbol) && this.isEarly(next.symbol)) {
                 issues.push({ type: 'error', msg: `${i}日: 遅番→早番は勤務間インターバル不足の恐れ` });
             }
@@ -67,9 +74,6 @@ export class ShiftConstraints {
 
     // Helper functions (In real app, map exact IDs from Settings)
     isOff(symbol) {
-        // "明" is technically Work-end but treated as Off-start? 
-        // Usually "休", "年休", "計画" (Plan Off) count as Off days for 4w8d?
-        // Let's assume types: OFF
         const s = this.getSymbol(symbol);
         return s && s.type === 'OFF';
     }
@@ -115,23 +119,25 @@ export class ShiftConstraints {
             // Check against requirements
             routes.forEach(r => {
                 const actual = counts[r.id] || 0;
-                // If required is strict, we check exact match. Usually "at least".
-                // User said "Duplicate Alert", implying Over-assignment checks.
-                // Assuming required is MAX allowed for unique routes like 1区?
-                // Actually usually 1区 is exactly 1 person.
+                // required はオブジェクト{weekday,sat,sun}または数値。重複検知では最大必要数を上限とみなす。
+                let reqMax;
+                if (typeof r.required === 'number') {
+                    reqMax = r.required;
+                } else if (r.required && typeof r.required === 'object') {
+                    reqMax = Math.max(r.required.weekday || 0, r.required.sat || 0, r.required.sun || 0);
+                } else {
+                    reqMax = 1;
+                }
 
-                // Let's flag if actual > required.
-                if (actual > r.required) {
+                if (actual > reqMax) {
                     issues.push({
                         day,
                         routeId: r.id,
                         actual,
-                        required: r.required,
-                        msg: `${day}日: ${r.name || r.id} が重複しています (${actual}/${r.required})`
+                        required: reqMax,
+                        msg: `${day}日: ${r.name || r.id} が重複しています (${actual}/${reqMax})`
                     });
                 }
-                // Optional: Flag missing requirements
-                // if (actual < r.required) ...
             });
         }
         return issues;
