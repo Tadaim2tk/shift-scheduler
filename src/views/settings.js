@@ -254,14 +254,14 @@ export class SettingsView {
 
             <!-- Modal for Route Staff -->
             <div id="route-staff-modal" class="modal hidden" style="position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);display:flex;justify-content:center;align-items:center;">
-              <div class="card" style="min-width:300px; max-height: 80vh; overflow-y: auto;">
-                  <div style="display:flex; justify-content:space-between; align-items:center; gap:8px;">
+              <div class="card" style="width: min(96vw, 1000px); max-height: 90vh; display:flex; flex-direction:column; overflow:hidden;">
+                  <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; flex:0 0 auto;">
                       <button id="route-staff-prev" class="small outline" title="前の担務へ">◀ 前</button>
                       <h3 id="route-staff-modal-title" style="margin:0; text-align:center; flex:1;">担当社員の設定</h3>
                       <button id="route-staff-next" class="small outline" title="次の担務へ">次 ▶</button>
                   </div>
-                  <div id="route-staff-modal-list" style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 1rem 0;"></div>
-                  <div class="flex justify-between">
+                  <div id="route-staff-modal-list"></div>
+                  <div class="flex justify-between" style="flex:0 0 auto; margin-top:0.75rem;">
                       <button id="route-staff-modal-close" class="outline">Cancel</button>
                       <button id="route-staff-modal-save" class="primary">Save</button>
                   </div>
@@ -589,44 +589,42 @@ export class SettingsView {
     const title = this.container.querySelector('#route-staff-modal-title');
 
     title.innerText = `担当社員設定: ${route.name}`;
-    list.style.display = 'block';
+    // リストエリアだけをスクロールさせ、タイトル/保存ボタンは固定する。
+    list.style.cssText = 'flex:1 1 auto; min-height:0; overflow-y:auto; margin:0.5rem 0; border:1px solid #444; border-radius:4px;';
 
     list.innerHTML = `
-        <div style="border:1px solid #444; padding:0.5rem; border-radius:4px; max-height:500px; overflow-y:auto;">
-            <table style="width:100%; border-collapse: collapse; text-align:center;">
-                <thead style="position: sticky; top: 0; background: #252525; z-index: 10;">
-                    <tr>
-                        <th style="text-align:left; padding-bottom:8px;">社員名</th>
-                        <th style="padding-bottom:8px;"><label style="font-size:0.8em;cursor:pointer;"><input type="checkbox" id="check-all-wd"> 平日</label></th>
-                        <th style="padding-bottom:8px;"><label style="font-size:0.8em;cursor:pointer;"><input type="checkbox" id="check-all-sat"> 土曜</label></th>
-                        <th style="padding-bottom:8px;"><label style="font-size:0.8em;cursor:pointer;"><input type="checkbox" id="check-all-sun"> 日祝</label></th>
-                    </tr>
-                </thead>
-                <tbody>
-                ${staffList.map(s => {
-                    const wdCaps = s.capabilities || [];
-                    const satCaps = s.satCapabilities || wdCaps;
-                    const sunCaps = s.sunCapabilities || wdCaps;
-                    
-                    const hasWd = wdCaps.includes(route.id) ? 'checked' : '';
-                    const hasSat = satCaps.includes(route.id) ? 'checked' : '';
-                    const hasSun = sunCaps.includes(route.id) ? 'checked' : '';
+        <div style="position:sticky; top:0; z-index:10; background:#252525; padding:8px 10px; border-bottom:1px solid #444; display:flex; flex-wrap:wrap; align-items:center; gap:12px;">
+            <span style="font-size:0.85em; color:#bbb;">全員選択:</span>
+            <label style="font-size:0.8em; cursor:pointer; display:flex; align-items:center; gap:4px;"><input type="checkbox" id="check-all-wd"> 平日</label>
+            <label style="font-size:0.8em; cursor:pointer; display:flex; align-items:center; gap:4px;"><input type="checkbox" id="check-all-sat"> 土曜</label>
+            <label style="font-size:0.8em; cursor:pointer; display:flex; align-items:center; gap:4px;"><input type="checkbox" id="check-all-sun"> 日祝</label>
+        </div>
+        <div style="display:grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap:8px; padding:10px;">
+            ${staffList.map(s => {
+                const wdCaps = s.capabilities || [];
+                const satCaps = s.satCapabilities || wdCaps;
+                const sunCaps = s.sunCapabilities || wdCaps;
 
-                    return `
-                    <tr style="border-bottom: 1px solid #333;">
-                        <td style="text-align:left; padding: 4px; font-size: 0.9em;">${s.name}</td>
-                        <td><input type="checkbox" class="route-staff-wd" data-sid="${s.id}" ${hasWd}></td>
-                        <td><input type="checkbox" class="route-staff-sat" data-sid="${s.id}" ${hasSat}></td>
-                        <td><input type="checkbox" class="route-staff-sun" data-sid="${s.id}" ${hasSun}></td>
-                    </tr>
-                    `;
-                }).join('')}
-                </tbody>
-            </table>
+                const hasWd = wdCaps.includes(route.id) ? 'checked' : '';
+                const hasSat = satCaps.includes(route.id) ? 'checked' : '';
+                const hasSun = sunCaps.includes(route.id) ? 'checked' : '';
+
+                return `
+                <div style="border:1px solid #3a3a3a; border-radius:6px; padding:6px 8px; background:#2a2a2a;">
+                    <div style="font-size:0.85em; margin-bottom:5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="${s.name}">${s.name}</div>
+                    <div style="display:flex; justify-content:space-around; gap:4px;">
+                        <label style="font-size:0.68em; color:#bbb; display:flex; flex-direction:column; align-items:center; gap:2px; cursor:pointer;">平<input type="checkbox" class="route-staff-wd" data-sid="${s.id}" ${hasWd}></label>
+                        <label style="font-size:0.68em; color:#bbb; display:flex; flex-direction:column; align-items:center; gap:2px; cursor:pointer;">土<input type="checkbox" class="route-staff-sat" data-sid="${s.id}" ${hasSat}></label>
+                        <label style="font-size:0.68em; color:#bbb; display:flex; flex-direction:column; align-items:center; gap:2px; cursor:pointer;">日<input type="checkbox" class="route-staff-sun" data-sid="${s.id}" ${hasSun}></label>
+                    </div>
+                </div>
+                `;
+            }).join('')}
         </div>
     `;
 
     modal.classList.remove('hidden');
+    list.scrollTop = 0; // 開く/移動のたびに先頭から表示
 
     // Attach "check all" events
     setTimeout(() => {
