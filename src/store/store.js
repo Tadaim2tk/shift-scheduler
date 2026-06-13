@@ -36,18 +36,18 @@ export class Store {
             { id: '12', name: '齋藤 俊輔', attributes: { title: '課長', group: '内務班' }, capabilities: [] },
 
             // 一斑
-            { id: '1', name: '虎谷 秀一', attributes: { title: '課長代理', group: '一斑' }, capabilities: ['1区', '2区', '3区', '混早1', '混早2', '1班予備', '2班予備', '弥彦予備'] },
-            { id: '2', name: '山本 清一', attributes: { title: '主任', group: '一斑' }, capabilities: ['3K', '5K', '6K', '特早', '特遅', '混早1', '混早2', '弥彦予備'] },
-            { id: '3', name: '狩谷 朋紀', attributes: { title: '主任', group: '一斑' }, capabilities: [] },
-            { id: '4', name: '佐藤 了', attributes: { title: '主任', group: '一斑' }, capabilities: [] },
+            { id: '1', name: '虎谷 秀一', attributes: { title: '課長代理', group: '一斑' }, capabilities: ['5区', '混早1', '混早2', '1班予備', '2班予備', '弥彦予備'] },
+            { id: '2', name: '山本 清一', attributes: { title: '主任', group: '一斑' }, capabilities: ['3区', '特早', '特遅', '混早1', '混早2', '弥彦予備'] },
+            { id: '3', name: '狩谷 朋紀', attributes: { title: '主任', group: '一斑' }, capabilities: ['2区', '3区', '5区'] },
+            { id: '4', name: '佐藤 了', attributes: { title: '主任', group: '一斑' }, capabilities: ['2区', '3区', '4区', '5区'] },
             { id: '32', name: '青木 豊', attributes: { title: '主任', group: '一斑' }, capabilities: [] },
-            { id: '5', name: '平出 貴一', attributes: { title: '新一般', group: '一斑' }, capabilities: [] },
-            { id: '6', name: '土田 真斗唯', attributes: { title: '新一般', group: '一斑' }, capabilities: [] },
-            { id: '10', name: '渋木 愛智', attributes: { title: '新一般', group: '一斑' }, capabilities: [] },
-            { id: '7', name: '笹川 巧', attributes: { title: '期間雇用', group: '一斑' }, capabilities: ['1班予備', '2班予備', '弥彦予備'] },
-            { id: '8', name: '渡邉 祐司', attributes: { title: '期間雇用', group: '一斑' }, capabilities: [] },
-            { id: '9', name: '相田 真吾', attributes: { title: '期間雇用', group: '一斑' }, capabilities: [] },
-            { id: '31', name: '原 生吹', attributes: { title: '期間雇用', group: '一斑' }, capabilities: [] },
+            { id: '5', name: '平出 貴一', attributes: { title: '新一般', group: '一斑' }, capabilities: ['1区', '4区', '5区'] },
+            { id: '6', name: '土田 真斗唯', attributes: { title: '新一般', group: '一斑' }, capabilities: ['1区', '4区'] },
+            { id: '10', name: '渋木 愛智', attributes: { title: '新一般', group: '一斑' }, capabilities: ['3区', '5区'] },
+            { id: '7', name: '笹川 巧', attributes: { title: '期間雇用', group: '一斑' }, capabilities: ['1区', '2区', '4区', '1班予備', '2班予備', '弥彦予備'] },
+            { id: '8', name: '渡邉 祐司', attributes: { title: '期間雇用', group: '一斑' }, capabilities: ['1区', '2区', '4区'] },
+            { id: '9', name: '相田 真吾', attributes: { title: '期間雇用', group: '一斑' }, capabilities: ['1区', '2区', '3区'] },
+            { id: '31', name: '原 生吹', attributes: { title: '期間雇用', group: '一斑' }, capabilities: ['2区'] },
 
             // 二班
             { id: '13', name: '佐藤 義之', attributes: { title: '課長代理', group: '二班' }, capabilities: [] },
@@ -72,7 +72,7 @@ export class Store {
             { id: '25', name: '橘 茂樹', attributes: { title: '課長', group: '内務班' }, capabilities: [] },
 
             // 一斑（末尾）
-            { id: '30', name: '神田 雅弥', attributes: { title: '地域基幹', group: '一斑' }, capabilities: [] },
+            { id: '30', name: '神田 雅弥', attributes: { title: '地域基幹', group: '一斑' }, capabilities: ['5区'] },
         ];
     }
 
