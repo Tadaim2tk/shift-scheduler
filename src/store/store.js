@@ -11,7 +11,11 @@ export class Store {
             symbols: this.getInitialSymbols(),
             schedule: {},
             settings: {
-                consecutiveLimit: 5
+                // 連勤上限などの制約パラメータはここを唯一の出所(single source of truth)とする。
+                // constraints.js(JS検証) はこの値を参照する。
+                maxConsecutiveWork: 5,   // 連続勤務の上限日数（これを超える連勤を禁止）
+                weeklyShukyu: 1,         // 1週あたりの週休数
+                minOffPer4Weeks: 8       // 4週あたりの最低休日数(4週8休)
             },
             daySettings: {} // { YM: { day: { extraRoutes: [] } } }
         };
@@ -369,6 +373,15 @@ export class Store {
     updateRoutes(list) { this.state.routes = list; this.save(); }
     updateSymbols(list) { this.state.symbols = list; this.save(); }
     updateSettings(settings) { this.state.settings = { ...this.state.settings, ...settings }; this.save(); }
+
+    // 連勤上限の解決（社員個別設定 > 全体設定）。各ロジックはこのメソッド経由で取得する。
+    getMaxConsecutiveWork(staff) {
+        const globalMax = this.state.settings?.maxConsecutiveWork ?? 5;
+        if (staff && staff.attributes && typeof staff.attributes.maxConsecutiveWork === 'number') {
+            return staff.attributes.maxConsecutiveWork;
+        }
+        return globalMax;
+    }
 
     getDaySettings(ym, day) {
         if (!this.state.daySettings) return {};
