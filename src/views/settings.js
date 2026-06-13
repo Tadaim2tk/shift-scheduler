@@ -175,7 +175,7 @@ export class SettingsView {
 
           <!-- Modal for Capabilities -->
           <div id="cap-modal" class="modal hidden" style="position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);display:flex;justify-content:center;align-items:center;">
-            <div class="card" style="min-width:300px; max-height: 80vh; overflow-y: auto;">
+            <div class="card" style="width: min(96vw, 1100px); max-height: 90vh; overflow-y: auto;">
                 <h3 id="cap-modal-title">Select Allowed Routes</h3>
                 <div id="cap-modal-list" style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 1rem 0;"></div>
                 <div class="flex justify-between">
@@ -482,19 +482,23 @@ export class SettingsView {
 
     const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
-    const renderColumn = (label, set, suffix) => `
-        <div style="border:1px solid #444; padding:0.5rem; border-radius:4px; flex:1;">
-            <h4 style="margin-bottom:0.5rem; border-bottom:1px solid #555; font-size: 0.9em;">${label}</h4>
-            <div style="display:flex; flex-direction:column; gap:4px; max-height:300px; overflow-y:auto;">
-                ${allRoutes.map(r => `
-                    <label style="display:flex; align-items:center; gap: 5px; font-size:0.85em;">
+    // その曜日に配置される担務(required[reqKey] > 0)だけを表示する。
+    const renderColumn = (label, set, suffix, reqKey) => {
+        const routesForDay = allRoutes.filter(r => (r.required?.[reqKey] || 0) > 0);
+        return `
+        <div style="border:1px solid #444; padding:0.5rem; border-radius:4px; flex:1; min-width:0;">
+            <h4 style="margin-bottom:0.5rem; border-bottom:1px solid #555; font-size: 0.9em;">${label} <span style="color:#888; font-weight:normal;">(${routesForDay.length})</span></h4>
+            <div style="display:grid; grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); gap:4px 8px; max-height:52vh; overflow-y:auto;">
+                ${routesForDay.length ? routesForDay.map(r => `
+                    <label style="display:flex; align-items:center; gap: 4px; font-size:0.82em; white-space:nowrap;">
                         <input type="checkbox" class="cap-cb-${suffix}" value="${r.id}" ${set.has(r.id) ? 'checked' : ''}>
                         ${r.id}
                     </label>
-                `).join('')}
+                `).join('') : '<span style="color:#777; font-size:0.8em;">配置なし</span>'}
             </div>
         </div>
-    `;
+        `;
+    };
 
     list.innerHTML = `
         <div style="margin-bottom: 1rem; padding-bottom: 1rem; border-bottom: 1px solid #555;">
@@ -528,10 +532,10 @@ export class SettingsView {
             </div>
         </div>
 
-        <div style="display:flex; gap:0.5rem; min-width: 500px;">
-            ${renderColumn('平日 (Weekday)', allowed, 'weekday')}
-            ${renderColumn('土曜 (Saturday)', allowedSat, 'sat')}
-            ${renderColumn('日祝 (Sun/Hol)', allowedSun, 'sun')}
+        <div style="display:flex; gap:0.5rem; flex-wrap:wrap;">
+            ${renderColumn('平日 (Weekday)', allowed, 'weekday', 'weekday')}
+            ${renderColumn('土曜 (Saturday)', allowedSat, 'sat', 'sat')}
+            ${renderColumn('日祝 (Sun/Hol)', allowedSun, 'sun', 'sun')}
         </div>
     `;
 
@@ -543,14 +547,22 @@ export class SettingsView {
     saveBtn.parentNode.replaceChild(newSaveBtn, saveBtn);
 
     newSaveBtn.addEventListener('click', () => {
-      const weekdayCB = list.querySelectorAll('.cap-cb-weekday:checked');
-      const satCB = list.querySelectorAll('.cap-cb-sat:checked');
-      const sunCB = list.querySelectorAll('.cap-cb-sun:checked');
       const offDayCB = list.querySelectorAll('.off-day-cb:checked');
 
-      const newCapabilities = Array.from(weekdayCB).map(cb => cb.value);
-      const newSatCapabilities = Array.from(satCB).map(cb => cb.value);
-      const newSunCapabilities = Array.from(sunCB).map(cb => cb.value);
+      // その曜日に表示中(=配置あり)の担務だけを保存対象にし、
+      // 非表示(配置なし)の担務の既存設定は保持する（非破壊）。
+      const mergeCaps = (displaySet, suffix, reqKey) => {
+        const shown = new Set(allRoutes.filter(r => (r.required?.[reqKey] || 0) > 0).map(r => r.id));
+        const checked = new Set(Array.from(list.querySelectorAll(`.cap-cb-${suffix}:checked`)).map(cb => cb.value));
+        const result = new Set();
+        displaySet.forEach(id => { if (!shown.has(id)) result.add(id); }); // 非表示分は保持
+        checked.forEach(id => result.add(id)); // 表示中でチェックされた分
+        return Array.from(result);
+      };
+
+      const newCapabilities = mergeCaps(allowed, 'weekday', 'weekday');
+      const newSatCapabilities = mergeCaps(allowedSat, 'sat', 'sat');
+      const newSunCapabilities = mergeCaps(allowedSun, 'sun', 'sun');
       const newPreferredOffDays = Array.from(offDayCB).map(cb => parseInt(cb.value));
       const newType = list.querySelector('#staff-type-select').value;
       const newPaidLeave = parseInt(list.querySelector('#input-paid-leave').value) || 0;
