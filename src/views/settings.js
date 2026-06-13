@@ -175,7 +175,7 @@ export class SettingsView {
 
           <!-- Modal for Capabilities -->
           <div id="cap-modal" class="modal hidden" style="position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);display:flex;justify-content:center;align-items:center;">
-            <div class="card" style="min-width:300px; max-height: 80vh; overflow-y: auto;">
+            <div class="card" style="width: min(96vw, 1100px); max-height: 90vh; overflow-y: auto;">
                 <h3 id="cap-modal-title">Select Allowed Routes</h3>
                 <div id="cap-modal-list" style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 1rem 0;"></div>
                 <div class="flex justify-between">
@@ -254,14 +254,14 @@ export class SettingsView {
 
             <!-- Modal for Route Staff -->
             <div id="route-staff-modal" class="modal hidden" style="position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);display:flex;justify-content:center;align-items:center;">
-              <div class="card" style="min-width:300px; max-height: 80vh; overflow-y: auto;">
-                  <div style="display:flex; justify-content:space-between; align-items:center; gap:8px;">
+              <div class="card" style="width: min(96vw, 1000px); max-height: 90vh; display:flex; flex-direction:column; overflow:hidden;">
+                  <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; flex:0 0 auto;">
                       <button id="route-staff-prev" class="small outline" title="前の担務へ">◀ 前</button>
                       <h3 id="route-staff-modal-title" style="margin:0; text-align:center; flex:1;">担当社員の設定</h3>
                       <button id="route-staff-next" class="small outline" title="次の担務へ">次 ▶</button>
                   </div>
-                  <div id="route-staff-modal-list" style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 1rem 0;"></div>
-                  <div class="flex justify-between">
+                  <div id="route-staff-modal-list"></div>
+                  <div class="flex justify-between" style="flex:0 0 auto; margin-top:0.75rem;">
                       <button id="route-staff-modal-close" class="outline">Cancel</button>
                       <button id="route-staff-modal-save" class="primary">Save</button>
                   </div>
@@ -482,19 +482,23 @@ export class SettingsView {
 
     const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
-    const renderColumn = (label, set, suffix) => `
-        <div style="border:1px solid #444; padding:0.5rem; border-radius:4px; flex:1;">
-            <h4 style="margin-bottom:0.5rem; border-bottom:1px solid #555; font-size: 0.9em;">${label}</h4>
-            <div style="display:flex; flex-direction:column; gap:4px; max-height:300px; overflow-y:auto;">
-                ${allRoutes.map(r => `
-                    <label style="display:flex; align-items:center; gap: 5px; font-size:0.85em;">
+    // その曜日に配置される担務(required[reqKey] > 0)だけを表示する。
+    const renderColumn = (label, set, suffix, reqKey) => {
+        const routesForDay = allRoutes.filter(r => (r.required?.[reqKey] || 0) > 0);
+        return `
+        <div style="border:1px solid #444; padding:0.5rem; border-radius:4px; flex:1; min-width:0;">
+            <h4 style="margin-bottom:0.5rem; border-bottom:1px solid #555; font-size: 0.9em;">${label} <span style="color:#888; font-weight:normal;">(${routesForDay.length})</span></h4>
+            <div style="display:grid; grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); gap:4px 8px; max-height:52vh; overflow-y:auto;">
+                ${routesForDay.length ? routesForDay.map(r => `
+                    <label style="display:flex; align-items:center; gap: 4px; font-size:0.82em; white-space:nowrap;">
                         <input type="checkbox" class="cap-cb-${suffix}" value="${r.id}" ${set.has(r.id) ? 'checked' : ''}>
                         ${r.id}
                     </label>
-                `).join('')}
+                `).join('') : '<span style="color:#777; font-size:0.8em;">配置なし</span>'}
             </div>
         </div>
-    `;
+        `;
+    };
 
     list.innerHTML = `
         <div style="margin-bottom: 1rem; padding-bottom: 1rem; border-bottom: 1px solid #555;">
@@ -528,10 +532,10 @@ export class SettingsView {
             </div>
         </div>
 
-        <div style="display:flex; gap:0.5rem; min-width: 500px;">
-            ${renderColumn('平日 (Weekday)', allowed, 'weekday')}
-            ${renderColumn('土曜 (Saturday)', allowedSat, 'sat')}
-            ${renderColumn('日祝 (Sun/Hol)', allowedSun, 'sun')}
+        <div style="display:flex; gap:0.5rem; flex-wrap:wrap;">
+            ${renderColumn('平日 (Weekday)', allowed, 'weekday', 'weekday')}
+            ${renderColumn('土曜 (Saturday)', allowedSat, 'sat', 'sat')}
+            ${renderColumn('日祝 (Sun/Hol)', allowedSun, 'sun', 'sun')}
         </div>
     `;
 
@@ -543,14 +547,22 @@ export class SettingsView {
     saveBtn.parentNode.replaceChild(newSaveBtn, saveBtn);
 
     newSaveBtn.addEventListener('click', () => {
-      const weekdayCB = list.querySelectorAll('.cap-cb-weekday:checked');
-      const satCB = list.querySelectorAll('.cap-cb-sat:checked');
-      const sunCB = list.querySelectorAll('.cap-cb-sun:checked');
       const offDayCB = list.querySelectorAll('.off-day-cb:checked');
 
-      const newCapabilities = Array.from(weekdayCB).map(cb => cb.value);
-      const newSatCapabilities = Array.from(satCB).map(cb => cb.value);
-      const newSunCapabilities = Array.from(sunCB).map(cb => cb.value);
+      // その曜日に表示中(=配置あり)の担務だけを保存対象にし、
+      // 非表示(配置なし)の担務の既存設定は保持する（非破壊）。
+      const mergeCaps = (displaySet, suffix, reqKey) => {
+        const shown = new Set(allRoutes.filter(r => (r.required?.[reqKey] || 0) > 0).map(r => r.id));
+        const checked = new Set(Array.from(list.querySelectorAll(`.cap-cb-${suffix}:checked`)).map(cb => cb.value));
+        const result = new Set();
+        displaySet.forEach(id => { if (!shown.has(id)) result.add(id); }); // 非表示分は保持
+        checked.forEach(id => result.add(id)); // 表示中でチェックされた分
+        return Array.from(result);
+      };
+
+      const newCapabilities = mergeCaps(allowed, 'weekday', 'weekday');
+      const newSatCapabilities = mergeCaps(allowedSat, 'sat', 'sat');
+      const newSunCapabilities = mergeCaps(allowedSun, 'sun', 'sun');
       const newPreferredOffDays = Array.from(offDayCB).map(cb => parseInt(cb.value));
       const newType = list.querySelector('#staff-type-select').value;
       const newPaidLeave = parseInt(list.querySelector('#input-paid-leave').value) || 0;
@@ -589,88 +601,85 @@ export class SettingsView {
     const title = this.container.querySelector('#route-staff-modal-title');
 
     title.innerText = `担当社員設定: ${route.name}`;
-    list.style.display = 'block';
+    // リストエリアだけをスクロールさせ、タイトル/保存ボタンは固定する。
+    list.style.cssText = 'flex:1 1 auto; min-height:0; overflow-y:auto; margin:0.5rem 0; border:1px solid #444; border-radius:4px;';
+
+    // 配置する曜日(route.required)。チェックされていない曜日は社員カードからも非表示にする。
+    const reqField = { wd: 'weekday', sat: 'sat', sun: 'sun' };
+    const dayConfig = {
+        wd: (route.required?.weekday || 0) > 0,
+        sat: (route.required?.sat || 0) > 0,
+        sun: (route.required?.sun || 0) > 0,
+    };
 
     list.innerHTML = `
-        <div style="border:1px solid #444; padding:0.5rem; border-radius:4px; max-height:500px; overflow-y:auto;">
-            <table style="width:100%; border-collapse: collapse; text-align:center;">
-                <thead style="position: sticky; top: 0; background: #252525; z-index: 10;">
-                    <tr>
-                        <th style="text-align:left; padding-bottom:8px;">社員名</th>
-                        <th style="padding-bottom:8px;"><label style="font-size:0.8em;cursor:pointer;"><input type="checkbox" id="check-all-wd"> 平日</label></th>
-                        <th style="padding-bottom:8px;"><label style="font-size:0.8em;cursor:pointer;"><input type="checkbox" id="check-all-sat"> 土曜</label></th>
-                        <th style="padding-bottom:8px;"><label style="font-size:0.8em;cursor:pointer;"><input type="checkbox" id="check-all-sun"> 日祝</label></th>
-                    </tr>
-                </thead>
-                <tbody>
-                ${staffList.map(s => {
-                    const wdCaps = s.capabilities || [];
-                    const satCaps = s.satCapabilities || wdCaps;
-                    const sunCaps = s.sunCapabilities || wdCaps;
-                    
-                    const hasWd = wdCaps.includes(route.id) ? 'checked' : '';
-                    const hasSat = satCaps.includes(route.id) ? 'checked' : '';
-                    const hasSun = sunCaps.includes(route.id) ? 'checked' : '';
+        <div style="position:sticky; top:0; z-index:10; background:#252525; padding:8px 10px; border-bottom:1px solid #444; display:flex; flex-wrap:wrap; align-items:center; gap:12px;">
+            <span style="font-size:0.85em; color:#bbb;">配置する曜日:</span>
+            <label style="font-size:0.85em; cursor:pointer; display:flex; align-items:center; gap:4px;"><input type="checkbox" id="route-day-wd" ${dayConfig.wd ? 'checked' : ''}> 平日</label>
+            <label style="font-size:0.85em; cursor:pointer; display:flex; align-items:center; gap:4px;"><input type="checkbox" id="route-day-sat" ${dayConfig.sat ? 'checked' : ''}> 土曜</label>
+            <label style="font-size:0.85em; cursor:pointer; display:flex; align-items:center; gap:4px;"><input type="checkbox" id="route-day-sun" ${dayConfig.sun ? 'checked' : ''}> 日祝</label>
+        </div>
+        <div style="display:grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap:8px; padding:10px;">
+            ${staffList.map(s => {
+                const wdCaps = s.capabilities || [];
+                const satCaps = s.satCapabilities || wdCaps;
+                const sunCaps = s.sunCapabilities || wdCaps;
 
-                    return `
-                    <tr style="border-bottom: 1px solid #333;">
-                        <td style="text-align:left; padding: 4px; font-size: 0.9em;">${s.name}</td>
-                        <td><input type="checkbox" class="route-staff-wd" data-sid="${s.id}" ${hasWd}></td>
-                        <td><input type="checkbox" class="route-staff-sat" data-sid="${s.id}" ${hasSat}></td>
-                        <td><input type="checkbox" class="route-staff-sun" data-sid="${s.id}" ${hasSun}></td>
-                    </tr>
-                    `;
-                }).join('')}
-                </tbody>
-            </table>
+                const checked = { wd: wdCaps.includes(route.id) ? 'checked' : '', sat: satCaps.includes(route.id) ? 'checked' : '', sun: sunCaps.includes(route.id) ? 'checked' : '' };
+                const cell = (type, label) => `<label class="day-col-${type}" style="font-size:0.68em; color:#bbb; flex-direction:column; align-items:center; gap:2px; cursor:pointer; display:${dayConfig[type] ? 'flex' : 'none'};">${label}<input type="checkbox" class="route-staff-${type}" data-sid="${s.id}" ${checked[type]}></label>`;
+
+                return `
+                <div style="border:1px solid #3a3a3a; border-radius:6px; padding:6px 8px; background:#2a2a2a;">
+                    <div style="font-size:0.85em; margin-bottom:5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="${s.name}">${s.name}</div>
+                    <div style="display:flex; justify-content:space-around; gap:4px; min-height:30px;">
+                        ${cell('wd', '平')}
+                        ${cell('sat', '土')}
+                        ${cell('sun', '日')}
+                    </div>
+                </div>
+                `;
+            }).join('')}
         </div>
     `;
 
     modal.classList.remove('hidden');
+    list.scrollTop = 0; // 開く/移動のたびに先頭から表示
 
-    // Attach "check all" events
-    setTimeout(() => {
-        ['wd', 'sat', 'sun'].forEach(dayType => {
-            const allCb = this.container.querySelector(`#check-all-${dayType}`);
-            if (allCb) {
-                allCb.addEventListener('change', (e) => {
-                    const cbs = this.container.querySelectorAll(`.route-staff-${dayType}`);
-                    cbs.forEach(cb => cb.checked = e.target.checked);
-                });
-            }
-        });
-    }, 10);
+    // 配置する曜日トグル：その曜日の社員列を表示/非表示する（保存はapplyEditsで、Cancelで破棄）。
+    const setDayVisible = (type, visible) => {
+        list.querySelectorAll('.day-col-' + type).forEach(el => { el.style.display = visible ? 'flex' : 'none'; });
+    };
+    ['wd', 'sat', 'sun'].forEach(type => {
+        const cb = this.container.querySelector('#route-day-' + type);
+        if (cb) cb.onchange = (e) => { dayConfig[type] = e.target.checked; setDayVisible(type, e.target.checked); };
+    });
 
-    // 現在モーダルのチェック状態を社員のスキルへ反映（保存ボタン・前後ナビ共通）
+    // 現在の編集を保存（保存ボタン・前後ナビ共通）：配置する曜日 + 社員capabilities。
     const applyEdits = () => {
+        // 1) 配置する曜日(required)を保存。既存値(2人以上など)は保持。
+        ['wd', 'sat', 'sun'].forEach(type => {
+            const cur = route.required?.[reqField[type]] || 0;
+            const val = dayConfig[type] ? (cur > 0 ? cur : 1) : 0;
+            this.store.updateRoute(idx, 'required.' + reqField[type], val);
+        });
+
+        // 2) 社員capabilitiesを保存。非表示(=配置しない)曜日はスキップして既存データを保持する。
         const newStaffList = JSON.parse(JSON.stringify(this.store.state.staff)); // deep copy
-
         newStaffList.forEach(s => {
-            const wdCb = list.querySelector(`.route-staff-wd[data-sid="${s.id}"]`);
-            const satCb = list.querySelector(`.route-staff-sat[data-sid="${s.id}"]`);
-            const sunCb = list.querySelector(`.route-staff-sun[data-sid="${s.id}"]`);
-
-            if (!wdCb) return;
-
-            const isWd = wdCb.checked;
-            const isSat = satCb.checked;
-            const isSun = sunCb.checked;
-
             if (!s.capabilities) s.capabilities = [];
             if (!s.satCapabilities) s.satCapabilities = [...s.capabilities];
             if (!s.sunCapabilities) s.sunCapabilities = [...s.capabilities];
 
-            // Weekday
-            if (isWd && !s.capabilities.includes(route.id)) s.capabilities.push(route.id);
-            if (!isWd) s.capabilities = s.capabilities.filter(c => c !== route.id);
-
-            // Saturday
-            if (isSat && !s.satCapabilities.includes(route.id)) s.satCapabilities.push(route.id);
-            if (!isSat) s.satCapabilities = s.satCapabilities.filter(c => c !== route.id);
-
-            // Sunday
-            if (isSun && !s.sunCapabilities.includes(route.id)) s.sunCapabilities.push(route.id);
-            if (!isSun) s.sunCapabilities = s.sunCapabilities.filter(c => c !== route.id);
+            const apply = (type, capKey) => {
+                if (!dayConfig[type]) return; // 非表示の曜日は変更しない
+                const cb = list.querySelector(`.route-staff-${type}[data-sid="${s.id}"]`);
+                if (!cb) return;
+                if (cb.checked && !s[capKey].includes(route.id)) s[capKey].push(route.id);
+                if (!cb.checked) s[capKey] = s[capKey].filter(c => c !== route.id);
+            };
+            apply('wd', 'capabilities');
+            apply('sat', 'satCapabilities');
+            apply('sun', 'sunCapabilities');
         });
 
         this.store.updateStaff(newStaffList);
