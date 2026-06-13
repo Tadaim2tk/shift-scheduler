@@ -592,12 +592,20 @@ export class SettingsView {
     // リストエリアだけをスクロールさせ、タイトル/保存ボタンは固定する。
     list.style.cssText = 'flex:1 1 auto; min-height:0; overflow-y:auto; margin:0.5rem 0; border:1px solid #444; border-radius:4px;';
 
+    // 配置する曜日(route.required)。チェックされていない曜日は社員カードからも非表示にする。
+    const reqField = { wd: 'weekday', sat: 'sat', sun: 'sun' };
+    const dayConfig = {
+        wd: (route.required?.weekday || 0) > 0,
+        sat: (route.required?.sat || 0) > 0,
+        sun: (route.required?.sun || 0) > 0,
+    };
+
     list.innerHTML = `
         <div style="position:sticky; top:0; z-index:10; background:#252525; padding:8px 10px; border-bottom:1px solid #444; display:flex; flex-wrap:wrap; align-items:center; gap:12px;">
-            <span style="font-size:0.85em; color:#bbb;">全員選択:</span>
-            <label style="font-size:0.8em; cursor:pointer; display:flex; align-items:center; gap:4px;"><input type="checkbox" id="check-all-wd"> 平日</label>
-            <label style="font-size:0.8em; cursor:pointer; display:flex; align-items:center; gap:4px;"><input type="checkbox" id="check-all-sat"> 土曜</label>
-            <label style="font-size:0.8em; cursor:pointer; display:flex; align-items:center; gap:4px;"><input type="checkbox" id="check-all-sun"> 日祝</label>
+            <span style="font-size:0.85em; color:#bbb;">配置する曜日:</span>
+            <label style="font-size:0.85em; cursor:pointer; display:flex; align-items:center; gap:4px;"><input type="checkbox" id="route-day-wd" ${dayConfig.wd ? 'checked' : ''}> 平日</label>
+            <label style="font-size:0.85em; cursor:pointer; display:flex; align-items:center; gap:4px;"><input type="checkbox" id="route-day-sat" ${dayConfig.sat ? 'checked' : ''}> 土曜</label>
+            <label style="font-size:0.85em; cursor:pointer; display:flex; align-items:center; gap:4px;"><input type="checkbox" id="route-day-sun" ${dayConfig.sun ? 'checked' : ''}> 日祝</label>
         </div>
         <div style="display:grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap:8px; padding:10px;">
             ${staffList.map(s => {
@@ -605,17 +613,16 @@ export class SettingsView {
                 const satCaps = s.satCapabilities || wdCaps;
                 const sunCaps = s.sunCapabilities || wdCaps;
 
-                const hasWd = wdCaps.includes(route.id) ? 'checked' : '';
-                const hasSat = satCaps.includes(route.id) ? 'checked' : '';
-                const hasSun = sunCaps.includes(route.id) ? 'checked' : '';
+                const checked = { wd: wdCaps.includes(route.id) ? 'checked' : '', sat: satCaps.includes(route.id) ? 'checked' : '', sun: sunCaps.includes(route.id) ? 'checked' : '' };
+                const cell = (type, label) => `<label class="day-col-${type}" style="font-size:0.68em; color:#bbb; flex-direction:column; align-items:center; gap:2px; cursor:pointer; display:${dayConfig[type] ? 'flex' : 'none'};">${label}<input type="checkbox" class="route-staff-${type}" data-sid="${s.id}" ${checked[type]}></label>`;
 
                 return `
                 <div style="border:1px solid #3a3a3a; border-radius:6px; padding:6px 8px; background:#2a2a2a;">
                     <div style="font-size:0.85em; margin-bottom:5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="${s.name}">${s.name}</div>
-                    <div style="display:flex; justify-content:space-around; gap:4px;">
-                        <label style="font-size:0.68em; color:#bbb; display:flex; flex-direction:column; align-items:center; gap:2px; cursor:pointer;">平<input type="checkbox" class="route-staff-wd" data-sid="${s.id}" ${hasWd}></label>
-                        <label style="font-size:0.68em; color:#bbb; display:flex; flex-direction:column; align-items:center; gap:2px; cursor:pointer;">土<input type="checkbox" class="route-staff-sat" data-sid="${s.id}" ${hasSat}></label>
-                        <label style="font-size:0.68em; color:#bbb; display:flex; flex-direction:column; align-items:center; gap:2px; cursor:pointer;">日<input type="checkbox" class="route-staff-sun" data-sid="${s.id}" ${hasSun}></label>
+                    <div style="display:flex; justify-content:space-around; gap:4px; min-height:30px;">
+                        ${cell('wd', '平')}
+                        ${cell('sat', '土')}
+                        ${cell('sun', '日')}
                     </div>
                 </div>
                 `;
@@ -626,49 +633,41 @@ export class SettingsView {
     modal.classList.remove('hidden');
     list.scrollTop = 0; // 開く/移動のたびに先頭から表示
 
-    // Attach "check all" events
-    setTimeout(() => {
-        ['wd', 'sat', 'sun'].forEach(dayType => {
-            const allCb = this.container.querySelector(`#check-all-${dayType}`);
-            if (allCb) {
-                allCb.addEventListener('change', (e) => {
-                    const cbs = this.container.querySelectorAll(`.route-staff-${dayType}`);
-                    cbs.forEach(cb => cb.checked = e.target.checked);
-                });
-            }
-        });
-    }, 10);
+    // 配置する曜日トグル：その曜日の社員列を表示/非表示する（保存はapplyEditsで、Cancelで破棄）。
+    const setDayVisible = (type, visible) => {
+        list.querySelectorAll('.day-col-' + type).forEach(el => { el.style.display = visible ? 'flex' : 'none'; });
+    };
+    ['wd', 'sat', 'sun'].forEach(type => {
+        const cb = this.container.querySelector('#route-day-' + type);
+        if (cb) cb.onchange = (e) => { dayConfig[type] = e.target.checked; setDayVisible(type, e.target.checked); };
+    });
 
-    // 現在モーダルのチェック状態を社員のスキルへ反映（保存ボタン・前後ナビ共通）
+    // 現在の編集を保存（保存ボタン・前後ナビ共通）：配置する曜日 + 社員capabilities。
     const applyEdits = () => {
+        // 1) 配置する曜日(required)を保存。既存値(2人以上など)は保持。
+        ['wd', 'sat', 'sun'].forEach(type => {
+            const cur = route.required?.[reqField[type]] || 0;
+            const val = dayConfig[type] ? (cur > 0 ? cur : 1) : 0;
+            this.store.updateRoute(idx, 'required.' + reqField[type], val);
+        });
+
+        // 2) 社員capabilitiesを保存。非表示(=配置しない)曜日はスキップして既存データを保持する。
         const newStaffList = JSON.parse(JSON.stringify(this.store.state.staff)); // deep copy
-
         newStaffList.forEach(s => {
-            const wdCb = list.querySelector(`.route-staff-wd[data-sid="${s.id}"]`);
-            const satCb = list.querySelector(`.route-staff-sat[data-sid="${s.id}"]`);
-            const sunCb = list.querySelector(`.route-staff-sun[data-sid="${s.id}"]`);
-
-            if (!wdCb) return;
-
-            const isWd = wdCb.checked;
-            const isSat = satCb.checked;
-            const isSun = sunCb.checked;
-
             if (!s.capabilities) s.capabilities = [];
             if (!s.satCapabilities) s.satCapabilities = [...s.capabilities];
             if (!s.sunCapabilities) s.sunCapabilities = [...s.capabilities];
 
-            // Weekday
-            if (isWd && !s.capabilities.includes(route.id)) s.capabilities.push(route.id);
-            if (!isWd) s.capabilities = s.capabilities.filter(c => c !== route.id);
-
-            // Saturday
-            if (isSat && !s.satCapabilities.includes(route.id)) s.satCapabilities.push(route.id);
-            if (!isSat) s.satCapabilities = s.satCapabilities.filter(c => c !== route.id);
-
-            // Sunday
-            if (isSun && !s.sunCapabilities.includes(route.id)) s.sunCapabilities.push(route.id);
-            if (!isSun) s.sunCapabilities = s.sunCapabilities.filter(c => c !== route.id);
+            const apply = (type, capKey) => {
+                if (!dayConfig[type]) return; // 非表示の曜日は変更しない
+                const cb = list.querySelector(`.route-staff-${type}[data-sid="${s.id}"]`);
+                if (!cb) return;
+                if (cb.checked && !s[capKey].includes(route.id)) s[capKey].push(route.id);
+                if (!cb.checked) s[capKey] = s[capKey].filter(c => c !== route.id);
+            };
+            apply('wd', 'capabilities');
+            apply('sat', 'satCapabilities');
+            apply('sun', 'sunCapabilities');
         });
 
         this.store.updateStaff(newStaffList);
