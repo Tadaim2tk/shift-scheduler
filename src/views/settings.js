@@ -470,6 +470,9 @@ export class SettingsView {
     // New: Leave Settings
     const paidLeave = staff.attributes?.paidLeaveRemaining ?? 0;
     const plannedLeave = staff.attributes?.plannedLeaveRemaining ?? 0;
+    const globalMaxConsecutive = this.store.state.settings?.maxConsecutiveWork ?? 5;
+    const maxConsecutiveWork = staff.attributes?.maxConsecutiveWork ?? globalMaxConsecutive;
+    const noSunday = staff.attributes?.noSunday === true;
 
     const modal = this.container.querySelector('#cap-modal');
     const list = this.container.querySelector('#cap-modal-list');
@@ -510,7 +513,7 @@ export class SettingsView {
                         <option value="helper" ${staffType === 'helper' ? 'selected' : ''}>Helper (Part Time)</option>
                     </select>
                 </div>
-                <div style="flex: 1; display:flex; gap: 1rem;">
+                <div style="flex: 1; display:flex; flex-wrap:wrap; gap: 0.75rem 1rem; align-items:center;">
                     <div>
                         <label>年休残 (Paid Leave):</label>
                         <input type="number" id="input-paid-leave" value="${paidLeave}" style="width: 50px;" min="0">
@@ -519,6 +522,14 @@ export class SettingsView {
                         <label>計年残 (Planned Leave):</label>
                         <input type="number" id="input-planned-leave" value="${plannedLeave}" style="width: 50px;" min="0">
                     </div>
+                    <div>
+                        <label>連勤上限:</label>
+                        <input type="number" id="input-max-consecutive" value="${maxConsecutiveWork}" style="width: 50px;" min="1" max="14" title="全体設定は${globalMaxConsecutive}日。違う値なら個人上書きになります。">
+                    </div>
+                    <label style="display:flex; align-items:center; gap:4px;">
+                        <input type="checkbox" id="input-no-sunday" ${noSunday ? 'checked' : ''}>
+                        日曜勤務不可
+                    </label>
                 </div>
             </div>
             
@@ -567,6 +578,11 @@ export class SettingsView {
       const newType = list.querySelector('#staff-type-select').value;
       const newPaidLeave = parseInt(list.querySelector('#input-paid-leave').value) || 0;
       const newPlannedLeave = parseInt(list.querySelector('#input-planned-leave').value) || 0;
+      const parsedMaxConsecutive = parseInt(list.querySelector('#input-max-consecutive').value);
+      const newMaxConsecutive = Number.isFinite(parsedMaxConsecutive) && parsedMaxConsecutive > 0
+        ? parsedMaxConsecutive
+        : globalMaxConsecutive;
+      const newNoSunday = list.querySelector('#input-no-sunday').checked;
 
       const newStaff = [...this.store.state.staff];
       const target = newStaff[this.currentStaffIdx];
@@ -579,6 +595,16 @@ export class SettingsView {
       target.attributes.type = newType;
       target.attributes.paidLeaveRemaining = newPaidLeave;
       target.attributes.plannedLeaveRemaining = newPlannedLeave;
+      if (newMaxConsecutive !== globalMaxConsecutive) {
+        target.attributes.maxConsecutiveWork = newMaxConsecutive;
+      } else {
+        delete target.attributes.maxConsecutiveWork;
+      }
+      if (newNoSunday) {
+        target.attributes.noSunday = true;
+      } else {
+        delete target.attributes.noSunday;
+      }
 
       this.store.updateStaff(newStaff);
 
@@ -706,4 +732,3 @@ export class SettingsView {
     closeBtn.onclick = () => modal.classList.add('hidden');
   }
 }
-
