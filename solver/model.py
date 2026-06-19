@@ -1,5 +1,6 @@
 from ortools.sat.python import cp_model
 from typing import Dict, Any
+from datetime import datetime
 
 def run_optimization(request_data: Dict[str, Any]) -> Dict[str, Any]:
     # Parse incoming JSON data
@@ -49,6 +50,16 @@ def run_optimization(request_data: Dict[str, Any]) -> Dict[str, Any]:
             labels = date_labels.get(d_str, {"isSun": False, "isSat": False, "isHol": False})
             is_sat = labels.get("isSat", False)
             is_sun_hol = labels.get("isSun", False) or labels.get("isHol", False)
+            unavailable_days = set(staff.get('preferredOffDays', []))
+            original_date = labels.get("originalDate")
+            day_of_week = None
+            if original_date:
+                try:
+                    # Python weekday: Mon=0..Sun=6 -> UI/JS: Sun=0..Sat=6
+                    day_of_week = (datetime.strptime(original_date, "%Y-%m-%d").weekday() + 1) % 7
+                except ValueError:
+                    day_of_week = None
+            is_locked = current_schedule.get(str(staff.get('id')), {}).get(d_str, {}).get('locked') is True
             
             # Determine which capability array to use
             if is_sun_hol:
@@ -59,6 +70,8 @@ def run_optimization(request_data: Dict[str, Any]) -> Dict[str, Any]:
                 caps = staff.get('weekdayCapabilities', staff.get('capabilities', []))
                 
             allowed_routes = set(caps)
+            if (not is_locked) and day_of_week in unavailable_days:
+                allowed_routes = set()
                 
             for r_id in route_ids:
                 if r_id not in allowed_routes:

@@ -465,14 +465,14 @@ export class SettingsView {
 
     // New Attributes
     const staffType = staff.attributes?.type || 'regular';
-    const prefOff = new Set(staff.preferredOffDays || []);
+    const unavailableDays = new Set(staff.preferredOffDays || []);
+    if (staff.attributes?.noSunday === true) unavailableDays.add(0); // Legacy migration: old noSunday -> Sun unavailable
 
     // New: Leave Settings
     const paidLeave = staff.attributes?.paidLeaveRemaining ?? 0;
     const plannedLeave = staff.attributes?.plannedLeaveRemaining ?? 0;
     const globalMaxConsecutive = this.store.state.settings?.maxConsecutiveWork ?? 5;
     const maxConsecutiveWork = staff.attributes?.maxConsecutiveWork ?? globalMaxConsecutive;
-    const noSunday = staff.attributes?.noSunday === true;
 
     const modal = this.container.querySelector('#cap-modal');
     const list = this.container.querySelector('#cap-modal-list');
@@ -526,18 +526,14 @@ export class SettingsView {
                         <label>連勤上限:</label>
                         <input type="number" id="input-max-consecutive" value="${maxConsecutiveWork}" style="width: 50px;" min="1" max="14" title="全体設定は${globalMaxConsecutive}日。違う値なら個人上書きになります。">
                     </div>
-                    <label style="display:flex; align-items:center; gap:4px;">
-                        <input type="checkbox" id="input-no-sunday" ${noSunday ? 'checked' : ''}>
-                        日曜勤務不可
-                    </label>
                 </div>
             </div>
             
             <div style="border:1px solid #444; padding:0.5rem; border-radius:4px; margin-bottom: 1rem;">
-                <h4 style="margin-bottom:0.5rem; border-bottom:1px solid #555; font-size: 0.9em;">Preferred Days Off (Priority Rest):</h4>
+                <h4 style="margin-bottom:0.5rem; border-bottom:1px solid #555; font-size: 0.9em;">勤務不可曜日</h4>
                 <div style="display:flex; gap:10px;">
                     ${days.map((d, i) => `
-                        <label><input type="checkbox" class="off-day-cb" value="${i}" ${prefOff.has(i) ? 'checked' : ''}> ${d}</label>
+                        <label><input type="checkbox" class="unavailable-day-cb" value="${i}" ${unavailableDays.has(i) ? 'checked' : ''}> ${d}</label>
                     `).join('')}
                 </div>
             </div>
@@ -558,7 +554,7 @@ export class SettingsView {
     saveBtn.parentNode.replaceChild(newSaveBtn, saveBtn);
 
     newSaveBtn.addEventListener('click', () => {
-      const offDayCB = list.querySelectorAll('.off-day-cb:checked');
+      const unavailableDayCB = list.querySelectorAll('.unavailable-day-cb:checked');
 
       // その曜日に表示中(=配置あり)の担務だけを保存対象にし、
       // 非表示(配置なし)の担務の既存設定は保持する（非破壊）。
@@ -574,7 +570,7 @@ export class SettingsView {
       const newCapabilities = mergeCaps(allowed, 'weekday', 'weekday');
       const newSatCapabilities = mergeCaps(allowedSat, 'sat', 'sat');
       const newSunCapabilities = mergeCaps(allowedSun, 'sun', 'sun');
-      const newPreferredOffDays = Array.from(offDayCB).map(cb => parseInt(cb.value));
+      const newUnavailableDays = Array.from(unavailableDayCB).map(cb => parseInt(cb.value));
       const newType = list.querySelector('#staff-type-select').value;
       const newPaidLeave = parseInt(list.querySelector('#input-paid-leave').value) || 0;
       const newPlannedLeave = parseInt(list.querySelector('#input-planned-leave').value) || 0;
@@ -582,7 +578,6 @@ export class SettingsView {
       const newMaxConsecutive = Number.isFinite(parsedMaxConsecutive) && parsedMaxConsecutive > 0
         ? parsedMaxConsecutive
         : globalMaxConsecutive;
-      const newNoSunday = list.querySelector('#input-no-sunday').checked;
 
       const newStaff = [...this.store.state.staff];
       const target = newStaff[this.currentStaffIdx];
@@ -590,7 +585,7 @@ export class SettingsView {
       target.capabilities = newCapabilities;
       target.satCapabilities = newSatCapabilities;
       target.sunCapabilities = newSunCapabilities;
-      target.preferredOffDays = newPreferredOffDays;
+      target.preferredOffDays = newUnavailableDays;
       if (!target.attributes) target.attributes = {};
       target.attributes.type = newType;
       target.attributes.paidLeaveRemaining = newPaidLeave;
@@ -600,11 +595,7 @@ export class SettingsView {
       } else {
         delete target.attributes.maxConsecutiveWork;
       }
-      if (newNoSunday) {
-        target.attributes.noSunday = true;
-      } else {
-        delete target.attributes.noSunday;
-      }
+      delete target.attributes.noSunday; // Legacy field; use preferredOffDays/unavailable-day-cb instead.
 
       this.store.updateStaff(newStaff);
 

@@ -74,7 +74,7 @@ export class Store {
             // 内務班
             { id: '26', name: '吉原 和美', attributes: { title: '期間雇用', group: '内務班' }, capabilities: [], satCapabilities: [], sunCapabilities: [] },
             { id: '27', name: '時田 眞弓', attributes: { title: '期間雇用', group: '内務班' }, capabilities: [], satCapabilities: [], sunCapabilities: [] },
-            { id: '28', name: '小川 莉奈', attributes: { title: '期間雇用', group: '内務班', maxConsecutiveWork: 6, noSunday: true }, capabilities: ['夕方区分'], satCapabilities: ['夕方区分'], sunCapabilities: [] },
+            { id: '28', name: '小川 莉奈', attributes: { title: '期間雇用', group: '内務班', maxConsecutiveWork: 6 }, preferredOffDays: [0], capabilities: ['夕方区分'], satCapabilities: ['夕方区分'], sunCapabilities: [] },
             { id: '29', name: '吉田 ひろみ', attributes: { title: '期間雇用', group: '内務班' }, capabilities: ['夕差立'], satCapabilities: [], sunCapabilities: [] },
             { id: '25', name: '橘 茂樹', attributes: { title: '課長', group: '内務班' }, capabilities: ['特早'], satCapabilities: ['特早'], sunCapabilities: ['特早'] },
 
@@ -399,4 +399,3 @@ export class Store {
     subscribe(fn) { this.listeners.push(fn); }
     notify() { this.listeners.forEach(fn => fn(this.state)); }
 }
-
