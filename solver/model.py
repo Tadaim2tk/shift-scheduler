@@ -93,7 +93,9 @@ def run_optimization(request_data: Dict[str, Any]) -> Dict[str, Any]:
             is_sun_hol = meta.get("isSunHol", False)
             unavailable_days = set(staff.get('preferredOffDays', []))
             day_of_week = meta.get("dayOfWeek")
-            is_locked = current_schedule.get(str(staff.get('id')), {}).get(d_str, {}).get('locked') is True
+            locked_cell = current_schedule.get(str(staff.get('id')), {}).get(d_str, {})
+            is_locked = locked_cell.get('locked') is True
+            locked_symbol = locked_cell.get('symbol')
             
             # Determine which capability array to use
             if is_sun_hol:
@@ -122,7 +124,7 @@ def run_optimization(request_data: Dict[str, Any]) -> Dict[str, Any]:
                 model.Add(x[(s_idx, d, '空き')] == 0)
                 
             for r_id in route_ids:
-                if r_id not in allowed_routes:
+                if r_id not in allowed_routes and not (is_locked and locked_symbol == r_id):
                     # If they don't have the skill, force it to 0
                     model.Add(x[(s_idx, d, r_id)] == 0)
 
@@ -139,15 +141,17 @@ def run_optimization(request_data: Dict[str, Any]) -> Dict[str, Any]:
             
             route_sum = sum(x[(s_idx, d, r_id)] for s_idx in range(num_staff))
             
+            locked_count = 0
+            for s in staff_list:
+                s_id = str(s.get('id'))
+                locked_cell = current_schedule.get(s_id, {}).get(d_str, {})
+                if locked_cell.get('locked') is True and locked_cell.get('symbol') == r_id:
+                    locked_count += 1
+
             if required_count == 0:
-                model.Add(route_sum == 0)
+                # その日に不要な担務は新規生成しない。ただし既存ロック済みセルは尊重する。
+                model.Add(route_sum == locked_count)
             else:
-                locked_count = 0
-                for s in staff_list:
-                    s_id = str(s.get('id'))
-                    locked_cell = current_schedule.get(s_id, {}).get(d_str, {})
-                    if locked_cell.get('locked') is True and locked_cell.get('symbol') == r_id:
-                        locked_count += 1
 
                 # 欠員はソフトに許容するが、過剰配置(区の被り)は生成しない。
                 # 既にロック済みで過剰な場合だけ、ロック尊重のため上限を広げる。
@@ -189,18 +193,33 @@ def run_optimization(request_data: Dict[str, Any]) -> Dict[str, Any]:
     # 6. Weekly rest rules
     # 週休: 完全な日曜〜土曜週ごとにちょうど1回。
     # 非番: 週数分を確保し、各週の±3日範囲に少なくとも1回。同一週3回は禁止。
+    weekly_rule_slacks = []
     for s_idx in range(num_staff):
         if full_weeks:
-            model.Add(sum(x[(s_idx, d, '非番')] for d in days) == len(full_weeks))
+            hiban_total = sum(x[(s_idx, d, '非番')] for d in days)
+            hiban_total_under = model.NewIntVar(0, days_in_month, f'hiban_total_under_{s_idx}')
+            hiban_total_over = model.NewIntVar(0, days_in_month, f'hiban_total_over_{s_idx}')
+            model.Add(hiban_total + hiban_total_under == len(full_weeks) + hiban_total_over)
+            weekly_rule_slacks.extend([hiban_total_under, hiban_total_over])
 
         for week_days in full_weeks:
-            model.Add(sum(x[(s_idx, d, '週休')] for d in week_days) == 1)
-            model.Add(sum(x[(s_idx, d, '非番')] for d in week_days) <= 2)
+            shukyu_count = sum(x[(s_idx, d, '週休')] for d in week_days)
+            shukyu_under = model.NewIntVar(0, len(week_days), f'shukyu_under_{s_idx}_{week_days[0]}')
+            shukyu_over = model.NewIntVar(0, len(week_days), f'shukyu_over_{s_idx}_{week_days[0]}')
+            model.Add(shukyu_count + shukyu_under == 1 + shukyu_over)
+            weekly_rule_slacks.extend([shukyu_under, shukyu_over])
+
+            hiban_week_count = sum(x[(s_idx, d, '非番')] for d in week_days)
+            hiban_week_over = model.NewIntVar(0, len(week_days), f'hiban_week_over_{s_idx}_{week_days[0]}')
+            model.Add(hiban_week_count <= 2 + hiban_week_over)
+            weekly_rule_slacks.append(hiban_week_over)
 
             ext_start = max(1, week_days[0] - 3)
             ext_end = min(days_in_month, week_days[-1] + 3)
             extended_days = range(ext_start, ext_end + 1)
-            model.Add(sum(x[(s_idx, d, '非番')] for d in extended_days) >= 1)
+            hiban_ext_under = model.NewIntVar(0, 1, f'hiban_ext_under_{s_idx}_{week_days[0]}')
+            model.Add(sum(x[(s_idx, d, '非番')] for d in extended_days) + hiban_ext_under >= 1)
+            weekly_rule_slacks.append(hiban_ext_under)
 
     # 8. Prevent solver from inventing 祝日 or 年休 or special UI states
     # Only allow them if the user explicitly locked them in the UI.
@@ -255,6 +274,11 @@ def run_optimization(request_data: Dict[str, Any]) -> Dict[str, Any]:
     # 欠員ペナルティよりは軽く、しかし通常運用では十分に強い重み。
     for key in consec_slack:
         objective_terms.append(consec_slack[key] * -200)   # 連勤超過のペナルティ
+
+    # 週休/非番ルールは実運用上かなり強いが、既存ロックや手入力矛盾で解なしにしない。
+    # 欠員より重いペナルティにして、ルールを破って穴埋めする方向へ逃げにくくする。
+    for slack in weekly_rule_slacks:
+        objective_terms.append(slack * -30000)
     
     # Penalize the maximum work days across all staff to balance the workload
     objective_terms.append(max_work_days * -20)
