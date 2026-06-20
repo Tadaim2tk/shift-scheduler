@@ -274,20 +274,7 @@ export class EditorView {
 
         let duplicateCount = 0;
         Object.keys(symbolMap).forEach(key => {
-          const dateStr = col.dateStr;
-          const isWeekendOrHol = JapaneseCalendar.isSaturday(dateStr) ||
-            JapaneseCalendar.isSunday(dateStr) ||
-            JapaneseCalendar.isHoliday(dateStr);
-
-          let limit = 1;
-          if (key === '夕方区分' || key === '夕方') {
-            // No Evening shift on Sun/Hol
-            if (JapaneseCalendar.isSunday(dateStr) || JapaneseCalendar.isHoliday(dateStr)) {
-              limit = 0;
-            } else {
-              limit = 2; // Default 2 for weekdays/Saturdays
-            }
-          }
+          const limit = this.getRequiredCountForRoute(key, col.dateStr, col.ym, col.day);
           if (symbolMap[key] > limit) {
             duplicateCount += (symbolMap[key] - limit);
           }
@@ -565,14 +552,29 @@ export class EditorView {
                     
                     const originalCell = this.store.getSchedule(ym)?.[s_id]?.[customDayStr] || {};
                     
-                    sch[s_id][customDayStr] = {
-                        symbol: daysMap[idx_str].symbol,
-                        locked: preserveAll && originalCell.symbol ? (originalCell.locked || false) : daysMap[idx_str].locked,
-                        type: 'ROUTE'
-                    };
+                    const solvedSymbol = daysMap[idx_str].symbol;
+                    if (!solvedSymbol || solvedSymbol === '空き') {
+                        delete sch[s_id][customDayStr];
+                    } else {
+                        sch[s_id][customDayStr] = {
+                            symbol: solvedSymbol,
+                            locked: preserveAll && originalCell.symbol ? (originalCell.locked || false) : daysMap[idx_str].locked,
+                            type: ['週休', '非番', '年休', '祝日', '希', '欠', '／'].includes(solvedSymbol) ? 'OFF' : 'ROUTE'
+                        };
+                    }
                     this.store.updateSchedule(ym, sch);
                 });
             });
+            if (result.unfilledRequirements?.length) {
+                const examples = result.unfilledRequirements.slice(0, 10).map(item => {
+                    const capable = item.capableStaff === 0 ? '担当可能者0人' : `担当可能者${item.capableStaff}人`;
+                    return `${item.date}: ${item.routeId} 不足${item.shortage} (${capable})`;
+                });
+                const more = result.unfilledRequirements.length > examples.length
+                    ? `\nほか ${result.unfilledRequirements.length - examples.length} 件`
+                    : '';
+                alert(`生成は完了しましたが、ルールを守ると残る欠員があります。\n\n${examples.join('\n')}${more}`);
+            }
         } else {
             alert('Optimization Error: ' + result.message);
         }
@@ -853,6 +855,30 @@ export class EditorView {
     this.updateFooter();
   }
 
+  getRequiredCountForRoute(routeId, dateStr, ym, day) {
+    const route = this.store.state.routes.find(r => r.id === routeId || r.name === routeId);
+    if (!route) return 0;
+
+    const isSat = JapaneseCalendar.isSaturday(dateStr);
+    const isSunOrHol = JapaneseCalendar.isSunday(dateStr) || JapaneseCalendar.isHoliday(dateStr);
+    let count = 0;
+    if (typeof route.required === 'number') {
+      count = route.required;
+    } else if (isSunOrHol) {
+      count = route.required?.sun ?? 0;
+    } else if (isSat) {
+      count = route.required?.sat ?? 0;
+    } else {
+      count = route.required?.weekday ?? 0;
+    }
+
+    const daySettings = this.store.getDaySettings(ym, day);
+    if (daySettings.extraRoutes) {
+      count += daySettings.extraRoutes.filter(id => id === route.id).length;
+    }
+    return count;
+  }
+
   checkDuplicates() {
     const container = document.querySelector('.container');
     if (!container) return;
@@ -891,7 +917,13 @@ export class EditorView {
 
       // Highlight duplicates
       Object.keys(symbolMap).forEach(key => {
-        const limit = (key === '夕方' || key === '夕方区分') ? 2 : 1;
+        const firstCell = symbolMap[key][0];
+        const limit = this.getRequiredCountForRoute(
+          key,
+          firstCell.dataset.date,
+          firstCell.dataset.ym,
+          parseInt(firstCell.dataset.day, 10)
+        );
         if (symbolMap[key].length > limit) {
           symbolMap[key].forEach(cell => cell.classList.add('duplicate-error'));
         }
@@ -1047,7 +1079,7 @@ export class EditorView {
 
       let duplicateCount = 0;
       Object.keys(symbolMap).forEach(key => {
-        const limit = (key === '夕方' || key === '夕方区分') ? 2 : 1;
+        const limit = this.getRequiredCountForRoute(key, col.dateStr, col.ym, col.day);
         if (symbolMap[key].length > limit) {
           duplicateCount += symbolMap[key].length - limit;
         }

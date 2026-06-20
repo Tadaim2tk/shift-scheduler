@@ -62,38 +62,52 @@ export class Generator {
         return caps;
     }
 
-    getRequiredRoutes(allRoutes, isSat, isSunOrHol, extraRoutes = []) {
-        let targetRoutes = [];
+    isUnavailableDay(staff, cell) {
+        return (staff.preferredOffDays || []).includes(cell.dayOfWeek);
+    }
 
-        if (isSat) {
-            targetRoutes.push(
-                { id: '特早', count: 1 }, { id: '特遅', count: 1 }, { id: '夕方区分', count: 1 },
-                { id: '弥彦早', count: 1 }, { id: '弥彦遅', count: 1 },
-                { id: '混早1', count: 1 }, { id: '混早2', count: 1 },
-                { id: '混遅1', count: 1 }, { id: '混遅2', count: 1 },
-                { id: '1班予備', count: 1 }, { id: '2班予備', count: 1 }
-            );
-        } else if (isSunOrHol) {
-            targetRoutes.push(
-                { id: '混早1', count: 1 }, { id: '混早2', count: 1 },
-                { id: '混遅1', count: 1 }, { id: '混遅2', count: 1 },
-                { id: '弥彦早', count: 1 }, { id: '弥彦遅', count: 1 },
-                { id: '特早', count: 1 }, { id: '特遅', count: 1 }
-            );
-        } else {
-            targetRoutes.push({ id: '夕方区分', count: 2 });
-            const coreWeekendRoutes = ['混早1', '混早2', '混遅1', '混遅2', '特早', '特遅'];
-            coreWeekendRoutes.forEach(id => targetRoutes.push({ id, count: 1 }));
-            const newCoreRoutes = ['弥彦早', '弥彦遅', '計画', '夕差立'];
-            newCoreRoutes.forEach(id => targetRoutes.push({ id, count: 1 }));
-            allRoutes.forEach(r => {
-                if (['1区', '2区', '3区', '4区', '5区', '6区', '7区', '8区', '9区', '10区', '11区', '12区', '13区'].includes(r.id)) {
-                    targetRoutes.push({ id: r.id, count: 1 });
-                }
-            });
-        }
-        extraRoutes.forEach(exId => targetRoutes.push({ id: exId, count: 1 }));
-        return targetRoutes.map(r => ({ ...r }));
+    canWorkRoute(staff, cell, routeId) {
+        if (this.isUnavailableDay(staff, cell)) return false;
+        const caps = this.getCapabilities(staff, cell.isSat, cell.isSunOrHol);
+        return caps.includes(routeId);
+    }
+
+    clearCell(cell) {
+        cell.symbol = null;
+        cell.type = null;
+        cell.fixed = false;
+    }
+
+    countRoute(matrix, staffList, day, routeId) {
+        return staffList.reduce((count, staff) => (
+            matrix[staff.id][day].symbol === routeId ? count + 1 : count
+        ), 0);
+    }
+
+    getRequiredRoutes(allRoutes, isSat, isSunOrHol, extraRoutes = []) {
+        const targetRoutes = [];
+
+        allRoutes.forEach(r => {
+            let count = 0;
+            if (typeof r.required === 'number') {
+                count = r.required;
+            } else if (isSunOrHol) {
+                count = r.required?.sun ?? 0;
+            } else if (isSat) {
+                count = r.required?.sat ?? 0;
+            } else {
+                count = r.required?.weekday ?? 0;
+            }
+            if (count > 0) targetRoutes.push({ id: r.id, count });
+        });
+
+        extraRoutes.forEach(routeId => {
+            const existing = targetRoutes.find(r => r.id === routeId);
+            if (existing) existing.count++;
+            else targetRoutes.push({ id: routeId, count: 1 });
+        });
+
+        return targetRoutes;
     }
 
     // ==========================================
@@ -189,17 +203,16 @@ export class Generator {
                         return;
                     }
 
-                    const caps = this.getCapabilities(s, cell.isSat, cell.isSunOrHol);
                     const possible = [];
-                    caps.forEach(capRoute => {
-                        const req = dailySlots[d]?.find(r => r.id === capRoute);
-                        if (!req) return;
+                    dailySlots[d]?.forEach(slotReq => {
+                        const capRoute = slotReq.id;
+                        if (!this.canWorkRoute(s, cell, capRoute)) return;
 
                         let filled = 0;
                         allStaff.forEach(other => {
                             if (matrix[other.id][d].symbol === capRoute) filled++;
                         });
-                        if (filled >= req.count) return;
+                        if (filled >= slotReq.count) return;
 
                         if (this.wouldBreakIntervals(matrix, s.id, d, capRoute)) return;
 
@@ -316,11 +329,9 @@ export class Generator {
                 const cell = matrix[s.id][d];
                 // Only assign if it's open (not locked/already assigned)
                 if (!cell.symbol || cell.symbol === '祝日') {
-                    const caps = this.getCapabilities(s, cell.isSat, cell.isSunOrHol);
-                    
                     // Count how many of their capabilities are ACTUALLY required on this day
                     const requiredRoutesToday = dailySlots[d] ? dailySlots[d].map(r => r.id) : [];
-                    const usableCaps = caps ? caps.filter(c => requiredRoutesToday.includes(c)) : [];
+                    const usableCaps = requiredRoutesToday.filter(routeId => this.canWorkRoute(s, cell, routeId));
 
                     // If they have literally 0 usable skills today, they CANNOT work today! Pre-assign holiday.
                     // Also honor staff-level unavailable weekdays (0=Sun ... 6=Sat).
@@ -446,7 +457,12 @@ export class Generator {
     }
 
     validateHolidayRules(matrix, staffId, startDay, endDay) {
-        // 1. Ensure maximum consecutive explicitly placed work is NEVER > 5
+        const staff = this.store.state.staff.find(s => String(s.id) === String(staffId));
+        const maxConsecutive = this.store.getMaxConsecutiveWork
+            ? this.store.getMaxConsecutiveWork(staff)
+            : (this.store.state.settings?.maxConsecutiveWork ?? 5);
+
+        // 1. Ensure maximum consecutive explicitly placed work does not exceed staff/global setting.
         let currentWorkStreak = 0;
         let maxStreak = 0;
         for (let d = startDay; d <= endDay; d++) {
@@ -456,24 +472,24 @@ export class Generator {
             } else {
                 currentWorkStreak++;
                 if (currentWorkStreak > maxStreak) maxStreak = currentWorkStreak;
-                if (currentWorkStreak > 5) return false;
+                if (currentWorkStreak > maxConsecutive) return false;
             }
         }
 
-        // 2. Ensure the mathematical foundation of Off Days protects against 6-day streaks
+        // 2. Ensure the mathematical foundation of Off Days protects against over-limit streaks.
         let offDays = [];
         for (let d = startDay; d <= endDay; d++) {
             const sym = matrix[staffId][d].symbol;
             if (this.isOffSym(sym) || sym === '祝日') offDays.push(d);
         }
         if (offDays.length > 0) {
-            if (offDays[0] - startDay > 5) return false;
-            if (endDay - offDays[offDays.length - 1] > 5) return false;
+            if (offDays[0] - startDay > maxConsecutive) return false;
+            if (endDay - offDays[offDays.length - 1] > maxConsecutive) return false;
             for (let i = 1; i < offDays.length; i++) {
-                if (offDays[i] - offDays[i - 1] - 1 > 5) return false;
+                if (offDays[i] - offDays[i - 1] - 1 > maxConsecutive) return false;
             }
         } else {
-            if (endDay - startDay + 1 > 5) return false;
+            if (endDay - startDay + 1 > maxConsecutive) return false;
         }
 
         // 3. Ensure no more than 2 非番 between any 週休
@@ -513,11 +529,11 @@ export class Generator {
             allStaff.forEach(s => {
                 const cA = matrix[s.id][a.day];
                 if (!cA.symbol || cA.symbol === '祝日') {
-                    if (this.getCapabilities(s, cA.isSat, cA.isSunOrHol).includes(a.routeId)) capableA++;
+                    if (this.canWorkRoute(s, cA, a.routeId)) capableA++;
                 }
                 const cB = matrix[s.id][b.day];
                 if (!cB.symbol || cB.symbol === '祝日') {
-                    if (this.getCapabilities(s, cB.isSat, cB.isSunOrHol).includes(b.routeId)) capableB++;
+                    if (this.canWorkRoute(s, cB, b.routeId)) capableB++;
                 }
             });
 
@@ -527,8 +543,10 @@ export class Generator {
             }
 
             // Fallback: weekend priority
-            const sumA = a.isSat ? 10 : a.isSunOrHol ? 20 : 0;
-            const sumB = b.isSat ? 10 : b.isSunOrHol ? 20 : 0;
+            const cellA = matrix[targetStaff[0]?.id]?.[a.day];
+            const cellB = matrix[targetStaff[0]?.id]?.[b.day];
+            const sumA = cellA?.isSunOrHol ? 20 : cellA?.isSat ? 10 : 0;
+            const sumB = cellB?.isSunOrHol ? 20 : cellB?.isSat ? 10 : 0;
             return sumB - sumA;
         });
 
@@ -608,8 +626,7 @@ export class Generator {
                     const c = matrix[s.id][slot.day];
                     if (c.symbol && c.symbol !== '祝日') return false;
 
-                    const caps = this.getCapabilities(s, c.isSat, c.isSunOrHol);
-                    if (!caps.includes(slot.routeId)) return false;
+                    if (!this.canWorkRoute(s, c, slot.routeId)) return false;
 
                     matrix[s.id][slot.day].symbol = slot.routeId;
                     const valid = this.validateHolidayRules(matrix, s.id, startDay, endDay);
@@ -675,8 +692,7 @@ export class Generator {
                 if (currentSym === routeToFill) continue;
 
                 // Can the staff work this route?
-                const caps = this.getCapabilities(s, cell.isSat, cell.isSunOrHol);
-                if (!caps.includes(routeToFill)) continue;
+                if (!this.canWorkRoute(s, cell, routeToFill)) continue;
 
                 // Will this route break their cross-day resting intervals?
                 if (this.wouldBreakIntervals(matrix, s.id, targetDay, routeToFill)) continue;
@@ -724,8 +740,7 @@ export class Generator {
             if (currentSym !== '週休' && currentSym !== '非番') continue;
             if (cell.locked) continue;
 
-            const caps = this.getCapabilities(s, cell.isSat, cell.isSunOrHol);
-            if (!caps.includes(targetRoute)) continue;
+            if (!this.canWorkRoute(s, cell, targetRoute)) continue;
 
             const backupSym = matrix[s.id][targetDay].symbol;
 
@@ -849,30 +864,41 @@ export class Generator {
 
                     for (let i = 0; i < overage && i < unlocked.length; i++) {
                         const s = unlocked[i];
-                        matrix[s.id][d].symbol = '祝日'; // Turn them to rest
-                        matrix[s.id][d].type = 'OFF';
+                        // Clear true overage back to empty so the footer "空き" count reflects it.
+                        this.clearCell(matrix[s.id][d]);
                     }
                 }
             });
 
             // 2. Resolve Missing (Too few assigned)
-            let missing = [];
+            const missing = [];
             dailySlots[d].forEach(req => {
-                let filled = 0;
-                allStaff.forEach(s => { if (matrix[s.id][d].symbol === req.id) filled++; });
+                const filled = this.countRoute(matrix, allStaff, d, req.id);
                 if (filled < req.count) {
                     for (let i = 0; i < (req.count - filled); i++) missing.push(req.id);
                 }
             });
 
             missing.forEach(missingRoute => {
-                // Find capable staff resting on '祝日'
+                const req = dailySlots[d].find(r => r.id === missingRoute);
+                if (!req || this.countRoute(matrix, allStaff, d, missingRoute) >= req.count) return;
+
+                // Find capable staff resting/free on empty or '祝日'.
                 const holidayStaff = targetStaff.filter(s => {
                     const c = matrix[s.id][d];
                     if (c.locked) return false;
-                    if (c.symbol !== '祝日') return false;
-                    const caps = this.getCapabilities(s, c.isSat, c.isSunOrHol);
-                    return caps.includes(missingRoute) && !this.wouldBreakIntervals(matrix, s.id, d, missingRoute);
+                    if (c.symbol && c.symbol !== '祝日') return false;
+                    if (!this.canWorkRoute(s, c, missingRoute)) return false;
+                    if (this.wouldBreakIntervals(matrix, s.id, d, missingRoute)) return false;
+
+                    const backupSym = c.symbol;
+                    const backupType = c.type;
+                    c.symbol = missingRoute;
+                    c.type = 'ROUTE';
+                    const valid = this.validateHolidayRules(matrix, s.id, startDay, endDay);
+                    c.symbol = backupSym;
+                    c.type = backupType;
+                    return valid;
                 });
 
                 if (holidayStaff.length > 0) {

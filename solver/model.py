@@ -1,6 +1,6 @@
 from ortools.sat.python import cp_model
 from typing import Dict, Any
-from datetime import datetime
+from datetime import datetime, timedelta
 
 def run_optimization(request_data: Dict[str, Any]) -> Dict[str, Any]:
     # Parse incoming JSON data
@@ -28,6 +28,47 @@ def run_optimization(request_data: Dict[str, Any]) -> Dict[str, Any]:
     # Standard route IDs
     route_ids = [r['id'] for r in routes]
     all_route_ids = route_ids + OFF_ROUTES
+
+    day_meta = {}
+    weeks = {}
+    for d in days:
+        labels = date_labels.get(str(d), {})
+        original_date = labels.get("originalDate")
+        parsed_date = None
+        if original_date:
+            try:
+                parsed_date = datetime.strptime(original_date, "%Y-%m-%d").date()
+            except ValueError:
+                parsed_date = None
+
+        if parsed_date:
+            # UI/JS weekday convention: Sun=0 ... Sat=6
+            day_of_week = (parsed_date.weekday() + 1) % 7
+            week_start = parsed_date - timedelta(days=day_of_week)
+            weeks.setdefault(week_start.isoformat(), []).append(d)
+        else:
+            day_of_week = 0 if labels.get("isSun") else 6 if labels.get("isSat") else None
+
+        day_meta[d] = {
+            "originalDate": original_date,
+            "dayOfWeek": day_of_week,
+            "isSat": labels.get("isSat", False),
+            "isSun": labels.get("isSun", False),
+            "isSunHol": labels.get("isSun", False) or labels.get("isHol", False),
+        }
+
+    full_weeks = [sorted(week_days) for week_days in weeks.values() if len(week_days) == 7]
+
+    def required_count_for(route, d):
+        required_val = route.get('required', 0)
+        meta = day_meta.get(d, {})
+        if isinstance(required_val, dict):
+            if meta.get("isSunHol"):
+                return int(required_val.get('sun', 0))
+            if meta.get("isSat"):
+                return int(required_val.get('sat', 0))
+            return int(required_val.get('weekday', 0))
+        return int(required_val)
     
     for s_idx, staff in enumerate(staff_list):
         for d in days:
@@ -47,18 +88,11 @@ def run_optimization(request_data: Dict[str, Any]) -> Dict[str, Any]:
     for s_idx, staff in enumerate(staff_list):
         for d in days:
             d_str = str(d)
-            labels = date_labels.get(d_str, {"isSun": False, "isSat": False, "isHol": False})
-            is_sat = labels.get("isSat", False)
-            is_sun_hol = labels.get("isSun", False) or labels.get("isHol", False)
+            meta = day_meta.get(d, {})
+            is_sat = meta.get("isSat", False)
+            is_sun_hol = meta.get("isSunHol", False)
             unavailable_days = set(staff.get('preferredOffDays', []))
-            original_date = labels.get("originalDate")
-            day_of_week = None
-            if original_date:
-                try:
-                    # Python weekday: Mon=0..Sun=6 -> UI/JS: Sun=0..Sat=6
-                    day_of_week = (datetime.strptime(original_date, "%Y-%m-%d").weekday() + 1) % 7
-                except ValueError:
-                    day_of_week = None
+            day_of_week = meta.get("dayOfWeek")
             is_locked = current_schedule.get(str(staff.get('id')), {}).get(d_str, {}).get('locked') is True
             
             # Determine which capability array to use
@@ -72,6 +106,20 @@ def run_optimization(request_data: Dict[str, Any]) -> Dict[str, Any]:
             allowed_routes = set(caps)
             if (not is_locked) and day_of_week in unavailable_days:
                 allowed_routes = set()
+
+            required_today = {r['id'] for r in routes if required_count_for(r, d) > 0}
+            usable_required_routes = allowed_routes.intersection(required_today)
+            if (not is_locked) and (is_sat or meta.get("isSun", False)) and not usable_required_routes:
+                # 土日祝に担当可能な必要担務が無い社員は、空欄/空き逃げではなく休みに固定する。
+                model.Add(x[(s_idx, d, '空き')] == 0)
+                if meta.get("isSun", False):
+                    # 日曜に出勤しない場合、その週の休みは日曜の週休として扱う。
+                    model.Add(x[(s_idx, d, '週休')] == 1)
+
+            if (not is_locked) and meta.get("isSun", False):
+                # 日曜は「出勤する」または「週休」。未ロックの日曜は非番/空きにしない。
+                model.Add(x[(s_idx, d, '非番')] == 0)
+                model.Add(x[(s_idx, d, '空き')] == 0)
                 
             for r_id in route_ids:
                 if r_id not in allowed_routes:
@@ -80,39 +128,32 @@ def run_optimization(request_data: Dict[str, Any]) -> Dict[str, Any]:
 
     # Slack variables for requirements
     slack_under = {}
-    slack_over = {}
 
     # 3. Requirement Fulfillment (Daily assignments) - SOFT CONSTRAINT via Slack
     for d in days:
         d_str = str(d)
-        labels = date_labels.get(d_str, {"isSun": False, "isSat": False, "isHol": False})
-        is_sat = labels.get("isSat", False)
-        is_sun_hol = labels.get("isSun", False) or labels.get("isHol", False)
         
         for r in routes:
             r_id = r['id']
-            required_val = r.get('required', 0)
-            
-            if isinstance(required_val, dict):
-                if is_sun_hol:
-                    required_count = int(required_val.get('sun', 0))
-                elif is_sat:
-                    required_count = int(required_val.get('sat', 0))
-                else:
-                    required_count = int(required_val.get('weekday', 0))
-            else:
-                required_count = int(required_val)
+            required_count = required_count_for(r, d)
             
             route_sum = sum(x[(s_idx, d, r_id)] for s_idx in range(num_staff))
             
             if required_count == 0:
                 model.Add(route_sum == 0)
             else:
-                # 穴埋めをスラック変数を使ったソフト制約に変更
+                locked_count = 0
+                for s in staff_list:
+                    s_id = str(s.get('id'))
+                    locked_cell = current_schedule.get(s_id, {}).get(d_str, {})
+                    if locked_cell.get('locked') is True and locked_cell.get('symbol') == r_id:
+                        locked_count += 1
+
+                # 欠員はソフトに許容するが、過剰配置(区の被り)は生成しない。
+                # 既にロック済みで過剰な場合だけ、ロック尊重のため上限を広げる。
+                model.Add(route_sum <= max(required_count, locked_count))
                 slack_under[(d, r_id)] = model.NewIntVar(0, num_staff, f'slack_under_{d}_{r_id}')
-                slack_over[(d, r_id)] = model.NewIntVar(0, num_staff, f'slack_over_{d}_{r_id}')
-                # OR-Tools limitation: avoid subtraction. Use addition on both sides.
-                model.Add(route_sum + slack_under[(d, r_id)] == required_count + slack_over[(d, r_id)])
+                model.Add(route_sum + slack_under[(d, r_id)] >= required_count)
 
     # 4. Locked Shifts from UI
     # If the user manually locked a shift, force the solver to respect it.
@@ -145,34 +186,21 @@ def run_optimization(request_data: Dict[str, Any]) -> Dict[str, Any]:
             consec_slack[(s_idx, start_d)] = model.NewBoolVar(f'consec_slack_{s_idx}_{start_d}')
             model.Add(sum(off_shifts) + consec_slack[(s_idx, start_d)] >= 1)
 
-    # 6. Weekly Rest Requirement (1 週休 per week) - SOFT CONSTRAINT via slack
-    sundays = [d for d in days if date_labels.get(str(d), {}).get("isSun", False)]
-    rest_slack = {}
+    # 6. Weekly rest rules
+    # 週休: 完全な日曜〜土曜週ごとにちょうど1回。
+    # 非番: 週数分を確保し、各週の±3日範囲に少なくとも1回。同一週3回は禁止。
     for s_idx in range(num_staff):
-        for sun_d in sundays:
-            week_days = [d for d in range(sun_d, sun_d + 7) if d <= days_in_month]
-            if len(week_days) == 7:
-                rest_slack[(s_idx, sun_d)] = model.NewBoolVar(f'rest_slack_{s_idx}_{sun_d}')
-                model.Add(sum(x[(s_idx, d, '週休')] for d in week_days) + rest_slack[(s_idx, sun_d)] >= 1)
+        if full_weeks:
+            model.Add(sum(x[(s_idx, d, '非番')] for d in days) == len(full_weeks))
 
-    # 7. Total Holiday Counts - SOFT CONSTRAINT via Slack
-    shukyu_slack_under = {}
-    shukyu_slack_over = {}
-    hiban_slack_under = {}
-    hiban_slack_over = {}
-    
-    for s_idx in range(num_staff):
-        shukyu_slack_under[s_idx] = model.NewIntVar(0, 31, f'shukyu_under_{s_idx}')
-        shukyu_slack_over[s_idx] = model.NewIntVar(0, 31, f'shukyu_over_{s_idx}')
-        # Usually 4 shukyu in a 28 day period. Scale proportionally based on days_in_month.
-        shukyu_target = round(days_in_month / 7)
-        # Avoid subtraction: Variable + Under == Target + Over
-        model.Add(sum(x[(s_idx, d, '週休')] for d in days) + shukyu_slack_under[s_idx] == shukyu_target + shukyu_slack_over[s_idx])
-        
-        hiban_slack_under[s_idx] = model.NewIntVar(0, 31, f'hiban_under_{s_idx}')
-        hiban_slack_over[s_idx] = model.NewIntVar(0, 31, f'hiban_over_{s_idx}')
-        hiban_target = round(days_in_month / 7)
-        model.Add(sum(x[(s_idx, d, '非番')] for d in days) + hiban_slack_under[s_idx] == hiban_target + hiban_slack_over[s_idx])
+        for week_days in full_weeks:
+            model.Add(sum(x[(s_idx, d, '週休')] for d in week_days) == 1)
+            model.Add(sum(x[(s_idx, d, '非番')] for d in week_days) <= 2)
+
+            ext_start = max(1, week_days[0] - 3)
+            ext_end = min(days_in_month, week_days[-1] + 3)
+            extended_days = range(ext_start, ext_end + 1)
+            model.Add(sum(x[(s_idx, d, '非番')] for d in extended_days) >= 1)
 
     # 8. Prevent solver from inventing 祝日 or 年休 or special UI states
     # Only allow them if the user explicitly locked them in the UI.
@@ -221,22 +249,12 @@ def run_optimization(request_data: Dict[str, Any]) -> Dict[str, Any]:
         for r in routes:
             r_id = r['id']
             if (d, r_id) in slack_under:
-                objective_terms.append(slack_under[(d, r_id)] * -500)  # Massive penalty for missing a shift
-            if (d, r_id) in slack_over:
-                objective_terms.append(slack_over[(d, r_id)] * -300)   # Big penalty for overstaffing a shift
+                objective_terms.append(slack_under[(d, r_id)] * -10000)  # 欠員を最優先で減らす
                 
-    for s_idx in range(num_staff):
-        objective_terms.append(shukyu_slack_under[s_idx] * -100)
-        objective_terms.append(shukyu_slack_over[s_idx] * -5)   # Small penalty for extra shukyu to prefer '空き'
-        objective_terms.append(hiban_slack_under[s_idx] * -100)
-        objective_terms.append(hiban_slack_over[s_idx] * -5)    # Small penalty for extra hiban to prefer '空き'
-
-    # 連勤上限・週休のソフト制約違反へのペナルティ。
-    # 必須シフト欠員(-500)よりは軽く、しかし通常運用では十分に強い重み。
+    # 連勤上限のソフト制約違反へのペナルティ。
+    # 欠員ペナルティよりは軽く、しかし通常運用では十分に強い重み。
     for key in consec_slack:
         objective_terms.append(consec_slack[key] * -200)   # 連勤超過のペナルティ
-    for key in rest_slack:
-        objective_terms.append(rest_slack[key] * -150)     # 週休未取得のペナルティ
     
     # Penalize the maximum work days across all staff to balance the workload
     objective_terms.append(max_work_days * -20)
@@ -253,7 +271,7 @@ def run_optimization(request_data: Dict[str, Any]) -> Dict[str, Any]:
         
         # 専門スタッフ（選択肢が少ない人）ほど、仕事を割り当てられた時のボーナスが大きくなる
         # これにより、ソルバーは「森山さん（1スキル）」に優先的にその仕事を振るようになる
-        # Multiplier reduced to 2 to prevent bonus from exceeding the slack_over penalty (300)
+        # Keep this bonus small so it never outweighs core staffing constraints.
         specialist_bonus = max(0, max_skills_found - choice_count) * 2
         
         knows_g1 = any(r in caps for r in ['1区', '2区', '3区', '4区', '5区', '6区'])
@@ -303,7 +321,7 @@ def run_optimization(request_data: Dict[str, Any]) -> Dict[str, Any]:
     # Solve
     # ----------------------------------------------------
     solver = cp_model.CpSolver()
-    solver.parameters.max_time_in_seconds = 60.0 # 60 sec timeout
+    solver.parameters.max_time_in_seconds = 120.0 # 欠員削減を優先して少し長めに探索
     solver.parameters.num_search_workers = 8     # 並列探索でレスポンスを改善
 
     status = solver.Solve(model)
@@ -328,11 +346,50 @@ def run_optimization(request_data: Dict[str, Any]) -> Dict[str, Any]:
                             "locked": is_locked
                         }
                         break # Optimization: only one route is assigned per day
+
+        unfilled_requirements = []
+        for d in days:
+            d_str = str(d)
+            original_date = day_meta.get(d, {}).get("originalDate")
+            if not original_date:
+                original_date = date_labels.get(d_str, {}).get("originalDate", d_str)
+            for r in routes:
+                r_id = r['id']
+                required_count = required_count_for(r, d)
+                if required_count <= 0:
+                    continue
+                assigned_count = sum(
+                    1 for staff in staff_list
+                    if result_matrix[str(staff['id'])][d_str]["symbol"] == r_id
+                )
+                shortage = required_count - assigned_count
+                if shortage > 0:
+                    capable_count = 0
+                    for staff in staff_list:
+                        meta = day_meta.get(d, {})
+                        if meta.get("isSunHol"):
+                            caps = staff.get('sunCapabilities', staff.get('capabilities', []))
+                        elif meta.get("isSat"):
+                            caps = staff.get('satCapabilities', staff.get('capabilities', []))
+                        else:
+                            caps = staff.get('weekdayCapabilities', staff.get('capabilities', []))
+                        if r_id in caps:
+                            capable_count += 1
+                    unfilled_requirements.append({
+                        "day": d,
+                        "date": original_date,
+                        "routeId": r_id,
+                        "required": required_count,
+                        "assigned": assigned_count,
+                        "shortage": shortage,
+                        "capableStaff": capable_count
+                    })
                         
         return {
             "status": "success",
             "message": "Optimization solved successfully.",
             "matrix": result_matrix,
+            "unfilledRequirements": unfilled_requirements,
             "status_code": "OPTIMAL" if status == cp_model.OPTIMAL else "FEASIBLE"
         }
     else:
