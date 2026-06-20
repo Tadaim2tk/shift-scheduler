@@ -80,7 +80,6 @@ def run_optimization(request_data: Dict[str, Any]) -> Dict[str, Any]:
 
     # Slack variables for requirements
     slack_under = {}
-    slack_over = {}
 
     # 3. Requirement Fulfillment (Daily assignments) - SOFT CONSTRAINT via Slack
     for d in days:
@@ -108,11 +107,18 @@ def run_optimization(request_data: Dict[str, Any]) -> Dict[str, Any]:
             if required_count == 0:
                 model.Add(route_sum == 0)
             else:
-                # 穴埋めをスラック変数を使ったソフト制約に変更
+                locked_count = 0
+                for s in staff_list:
+                    s_id = str(s.get('id'))
+                    locked_cell = current_schedule.get(s_id, {}).get(d_str, {})
+                    if locked_cell.get('locked') is True and locked_cell.get('symbol') == r_id:
+                        locked_count += 1
+
+                # 欠員はソフトに許容するが、過剰配置(区の被り)は生成しない。
+                # 既にロック済みで過剰な場合だけ、ロック尊重のため上限を広げる。
+                model.Add(route_sum <= max(required_count, locked_count))
                 slack_under[(d, r_id)] = model.NewIntVar(0, num_staff, f'slack_under_{d}_{r_id}')
-                slack_over[(d, r_id)] = model.NewIntVar(0, num_staff, f'slack_over_{d}_{r_id}')
-                # OR-Tools limitation: avoid subtraction. Use addition on both sides.
-                model.Add(route_sum + slack_under[(d, r_id)] == required_count + slack_over[(d, r_id)])
+                model.Add(route_sum + slack_under[(d, r_id)] >= required_count)
 
     # 4. Locked Shifts from UI
     # If the user manually locked a shift, force the solver to respect it.
@@ -222,8 +228,6 @@ def run_optimization(request_data: Dict[str, Any]) -> Dict[str, Any]:
             r_id = r['id']
             if (d, r_id) in slack_under:
                 objective_terms.append(slack_under[(d, r_id)] * -500)  # Massive penalty for missing a shift
-            if (d, r_id) in slack_over:
-                objective_terms.append(slack_over[(d, r_id)] * -300)   # Big penalty for overstaffing a shift
                 
     for s_idx in range(num_staff):
         objective_terms.append(shukyu_slack_under[s_idx] * -100)
@@ -253,7 +257,7 @@ def run_optimization(request_data: Dict[str, Any]) -> Dict[str, Any]:
         
         # 専門スタッフ（選択肢が少ない人）ほど、仕事を割り当てられた時のボーナスが大きくなる
         # これにより、ソルバーは「森山さん（1スキル）」に優先的にその仕事を振るようになる
-        # Multiplier reduced to 2 to prevent bonus from exceeding the slack_over penalty (300)
+        # Keep this bonus small so it never outweighs core staffing constraints.
         specialist_bonus = max(0, max_skills_found - choice_count) * 2
         
         knows_g1 = any(r in caps for r in ['1区', '2区', '3区', '4区', '5区', '6区'])
