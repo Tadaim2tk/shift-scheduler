@@ -36,38 +36,37 @@ export class Store {
         // 並び順・役職(title)・班(group)の初期値はユーザー指定の社員ステータス画面に合わせる。
         // 各社員のid・capabilities・特殊attributes(連勤上限/日祝不可など)は従来の既定を保持する。
         // capabilities=平日 / satCapabilities=土曜 / sunCapabilities=日祝 の担当可否。
-        // スクショ(1〜13区/混早1,2/混遅1,2/弥彦早,遅/特早,遅/計画/夕方区分/夕差立)を反映。
-        // 未提供(混中1,2・各予備)はweekday既定のみ保持。
+        // スクショ(1〜13区/混早1,2/混遅1,2/混中1,2/弥彦早,遅/特早,遅/計画/夕方区分/夕差立)を反映。
         return [
             // 内務班（先頭）
             { id: '12', name: '齋藤 俊輔', attributes: { title: '課長', group: '内務班' }, capabilities: ['7区', '8区', '10区', '11区', '混早2', '混遅2', '特早', '計画'], satCapabilities: ['混早2'], sunCapabilities: [] },
 
             // 一斑
-            { id: '1', name: '虎谷 秀一', attributes: { title: '課長代理', group: '一斑' }, capabilities: ['5区', '6区', '7区', '混早1', '混遅1', '1班予備', '2班予備', '弥彦予備'], satCapabilities: ['混遅1'], sunCapabilities: ['混遅1'] },
+            { id: '1', name: '虎谷 秀一', attributes: { title: '課長代理', group: '一斑' }, capabilities: ['5区', '6区', '7区', '混早1', '混遅1', '1班予備', '2班予備', '弥彦予備'], satCapabilities: ['混遅1'], sunCapabilities: ['混遅1', '混中1'] },
             { id: '2', name: '山本 清一', attributes: { title: '主任', group: '一斑' }, capabilities: ['3区', '6区', '特早', '特遅', '弥彦予備'], satCapabilities: ['特遅'], sunCapabilities: ['特遅'] },
-            { id: '3', name: '狩谷 朋紀', attributes: { title: '主任', group: '一斑' }, capabilities: ['2区', '3区', '5区', '6区', '混早1', '混遅1'], satCapabilities: ['混遅1'], sunCapabilities: ['混遅1'] },
+            { id: '3', name: '狩谷 朋紀', attributes: { title: '主任', group: '一斑' }, capabilities: ['2区', '3区', '5区', '6区', '混早1', '混遅1'], satCapabilities: ['混遅1'], sunCapabilities: ['混遅1', '混中1'] },
             { id: '4', name: '佐藤 了', attributes: { title: '主任', group: '一斑' }, capabilities: ['2区', '3区', '4区', '5区', '混早1'], satCapabilities: ['混早1'], sunCapabilities: ['混早1'] },
             { id: '32', name: '青木 豊', attributes: { title: '主任', group: '一斑' }, capabilities: ['混遅1'], satCapabilities: [], sunCapabilities: [] },
-            { id: '5', name: '平出 貴一', attributes: { title: '新一般', group: '一斑' }, capabilities: ['1区', '4区', '5区', '混遅1', '特遅'], satCapabilities: ['混遅1', '特遅'], sunCapabilities: ['混遅1', '特遅'] },
+            { id: '5', name: '平出 貴一', attributes: { title: '新一般', group: '一斑' }, capabilities: ['1区', '4区', '5区', '混遅1', '特遅'], satCapabilities: ['混遅1', '特遅'], sunCapabilities: ['混遅1', '混中1', '特遅'] },
             { id: '6', name: '土田 真斗唯', attributes: { title: '新一般', group: '一斑' }, capabilities: ['1区', '4区'], satCapabilities: [], sunCapabilities: [] },
-            { id: '10', name: '渋木 愛智', attributes: { title: '新一般', group: '一斑' }, capabilities: ['3区', '5区', '6区', '混遅1'], satCapabilities: ['混遅1'], sunCapabilities: ['混遅1'] },
+            { id: '10', name: '渋木 愛智', attributes: { title: '新一般', group: '一斑' }, capabilities: ['3区', '5区', '6区', '混遅1'], satCapabilities: ['混遅1'], sunCapabilities: ['混遅1', '混中1'] },
             { id: '7', name: '笹川 巧', attributes: { title: '期間雇用', group: '一斑' }, capabilities: ['1区', '2区', '4区', '特早', '特遅', '1班予備', '2班予備', '弥彦予備'], satCapabilities: ['特早', '特遅'], sunCapabilities: ['特早', '特遅'] },
             { id: '8', name: '渡邉 祐司', attributes: { title: '期間雇用', group: '一斑' }, capabilities: ['1区', '2区', '4区', '混早1'], satCapabilities: ['混早1'], sunCapabilities: ['混早1'] },
             { id: '9', name: '相田 真吾', attributes: { title: '期間雇用', group: '一斑' }, capabilities: ['1区', '2区', '3区', '混早1'], satCapabilities: [], sunCapabilities: [] },
             { id: '31', name: '原 生吹', attributes: { title: '期間雇用', group: '一斑' }, capabilities: ['2区'], satCapabilities: [], sunCapabilities: [] },
 
             // 二班
-            { id: '13', name: '佐藤 義之', attributes: { title: '課長代理', group: '二班' }, capabilities: ['7区', '12区', '13区', '混早2', '弥彦早'], satCapabilities: ['弥彦遅'], sunCapabilities: ['混遅2', '弥彦遅'] },
+            { id: '13', name: '佐藤 義之', attributes: { title: '課長代理', group: '二班' }, capabilities: ['7区', '12区', '13区', '混早2', '弥彦早'], satCapabilities: ['弥彦遅'], sunCapabilities: ['混遅2', '混中2', '弥彦遅'] },
             { id: '14', name: '藤田 義彦', attributes: { title: '主任', group: '二班' }, capabilities: ['11区', '12区', '13区', '弥彦早'], satCapabilities: ['弥彦早', '弥彦遅'], sunCapabilities: ['弥彦早'] },
             { id: '15', name: '吉川 賢人', attributes: { title: '地域基幹', group: '二班' }, capabilities: ['7区', '8区', '10区'], satCapabilities: [], sunCapabilities: [] },
             { id: '24', name: '永井 智之', attributes: { title: '新一般', group: '二班' }, capabilities: ['8区', '混早2'], satCapabilities: ['混早2'], sunCapabilities: [] },
             { id: '16', name: '丸山 主', attributes: { title: '新一般', group: '二班' }, capabilities: ['11区', '12区', '13区', '弥彦早'], satCapabilities: ['弥彦早', '弥彦遅'], sunCapabilities: ['弥彦早', '弥彦遅'] },
             { id: '17', name: '丸山 優貴', attributes: { title: '新一般', group: '二班' }, capabilities: ['8区', '9区', '10区', '12区', '混早2'], satCapabilities: ['混早2'], sunCapabilities: ['混早2'] },
-            { id: '18', name: '近藤 航哉', attributes: { title: '新一般', group: '二班' }, capabilities: ['6区', '7区', '8区', '10区', '混遅2'], satCapabilities: ['混遅2'], sunCapabilities: ['混遅2'] },
+            { id: '18', name: '近藤 航哉', attributes: { title: '新一般', group: '二班' }, capabilities: ['6区', '7区', '8区', '10区', '混遅2'], satCapabilities: ['混遅2'], sunCapabilities: ['混遅2', '混中2'] },
             { id: '19', name: '丸山 和弘', attributes: { title: '期間雇用', group: '二班' }, capabilities: ['11区', '13区'], satCapabilities: ['弥彦遅'], sunCapabilities: [] },
             { id: '20', name: '五十嵐 亨', attributes: { title: '期間雇用', group: '二班' }, capabilities: ['9区', '12区', '13区', '弥彦早'], satCapabilities: ['弥彦早', '弥彦遅'], sunCapabilities: ['弥彦早', '弥彦遅'] },
             { id: '21', name: '前山 正順', attributes: { title: '期間雇用', group: '二班' }, capabilities: ['9区', '10区', '混早2', '混遅2'], satCapabilities: ['混早2', '混遅2'], sunCapabilities: ['混遅2'] },
-            { id: '23', name: '今津 大翔', attributes: { title: '期間雇用', group: '二班' }, capabilities: ['7区', '8区', '混遅2'], satCapabilities: ['混遅2'], sunCapabilities: ['混遅2'] },
+            { id: '23', name: '今津 大翔', attributes: { title: '期間雇用', group: '二班' }, capabilities: ['7区', '8区', '混遅2'], satCapabilities: ['混遅2'], sunCapabilities: ['混遅2', '混中2'] },
             { id: '22', name: '長谷川 裕之', attributes: { title: '期間雇用', group: '二班' }, capabilities: ['弥彦遅'], satCapabilities: [], sunCapabilities: [] },
             { id: '11', name: '森山 正悟', attributes: { title: '期間雇用', group: '二班' }, capabilities: ['9区'], satCapabilities: [], sunCapabilities: [] },
 
@@ -332,6 +331,27 @@ export class Store {
         }
     }
 
+    applyMiddayMixedDefaults() {
+        const defaults = {
+            '混中1': new Set(['1', '3', '5', '10']),      // 虎谷, 狩谷, 平出, 渋木
+            '混中2': new Set(['13', '18', '23'])          // 佐藤義之, 近藤, 今津
+        };
+        const routeIds = Object.keys(defaults);
+
+        this.state.staff.forEach(s => {
+            s.capabilities = (s.capabilities || []).filter(c => !routeIds.includes(c));
+            s.satCapabilities = (s.satCapabilities || []).filter(c => !routeIds.includes(c));
+            s.sunCapabilities = (s.sunCapabilities || []).filter(c => !routeIds.includes(c));
+
+            routeIds.forEach(routeId => {
+                if (defaults[routeId].has(String(s.id))) {
+                    s.sunCapabilities.push(routeId);
+                }
+            });
+            s.sunCapabilities = [...new Set(s.sunCapabilities)];
+        });
+    }
+
     ensureDefaults() {
         // Re-inject defaults if missing
         const defaults = [
@@ -354,6 +374,12 @@ export class Store {
                 this.state.routes.push(d);
             }
         });
+
+        const staffDefaultsVersion = 'midday-mixed-2026-06-21';
+        if (this.state.staffDefaultsVersion !== staffDefaultsVersion) {
+            this.applyMiddayMixedDefaults();
+            this.state.staffDefaultsVersion = staffDefaultsVersion;
+        }
         this.save();
     }
 
