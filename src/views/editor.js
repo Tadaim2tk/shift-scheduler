@@ -565,6 +565,16 @@ export class EditorView {
                     this.store.updateSchedule(ym, sch);
                 });
             });
+            if (result.unfilledRequirements?.length) {
+                const examples = result.unfilledRequirements.slice(0, 10).map(item => {
+                    const capable = item.capableStaff === 0 ? '担当可能者0人' : `担当可能者${item.capableStaff}人`;
+                    return `${item.date}: ${item.routeId} 不足${item.shortage} (${capable})`;
+                });
+                const more = result.unfilledRequirements.length > examples.length
+                    ? `\nほか ${result.unfilledRequirements.length - examples.length} 件`
+                    : '';
+                alert(`生成は完了しましたが、ルールを守ると残る欠員があります。\n\n${examples.join('\n')}${more}`);
+            }
         } else {
             alert('Optimization Error: ' + result.message);
         }
