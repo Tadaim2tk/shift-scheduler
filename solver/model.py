@@ -84,6 +84,11 @@ def run_optimization(request_data: Dict[str, Any]) -> Dict[str, Any]:
         for d in days:
             model.AddExactlyOne(x[(s_idx, d, r_id)] for r_id in all_route_ids)
             
+    # Soft violation collectors. These keep the model from becoming infeasible
+    # when preserved/manual cells conflict with the latest settings.
+    illegal_route_terms = []
+    sunday_rule_terms = []
+
     # 2. Staff Capabilities (Skill check)
     for s_idx, staff in enumerate(staff_list):
         for d in days:
@@ -113,23 +118,25 @@ def run_optimization(request_data: Dict[str, Any]) -> Dict[str, Any]:
             usable_required_routes = allowed_routes.intersection(required_today)
             if (not is_locked) and (is_sat or meta.get("isSun", False)) and not usable_required_routes:
                 # 土日祝に担当可能な必要担務が無い社員は、空欄/空き逃げではなく休みに固定する。
-                model.Add(x[(s_idx, d, '空き')] == 0)
+                sunday_rule_terms.append(x[(s_idx, d, '空き')])
                 if meta.get("isSun", False):
                     # 日曜に出勤しない場合、その週の休みは日曜の週休として扱う。
-                    model.Add(x[(s_idx, d, '週休')] == 1)
+                    sunday_rule_terms.extend(x[(s_idx, d, r_id)] for r_id in all_route_ids if r_id != '週休')
 
             if (not is_locked) and meta.get("isSun", False):
                 # 日曜は「出勤する」または「週休」。未ロックの日曜は非番/空きにしない。
-                model.Add(x[(s_idx, d, '非番')] == 0)
-                model.Add(x[(s_idx, d, '空き')] == 0)
+                sunday_rule_terms.append(x[(s_idx, d, '非番')])
+                sunday_rule_terms.append(x[(s_idx, d, '空き')])
                 
             for r_id in route_ids:
                 if r_id not in allowed_routes and not (is_locked and locked_symbol == r_id):
-                    # If they don't have the skill, force it to 0
-                    model.Add(x[(s_idx, d, r_id)] == 0)
+                    # Normally this should never be used. Keep it soft so a bad
+                    # preserved schedule does not make the entire solve fail.
+                    illegal_route_terms.append(x[(s_idx, d, r_id)])
 
     # Slack variables for requirements
     slack_under = {}
+    slack_over = {}
 
     # 3. Requirement Fulfillment (Daily assignments) - SOFT CONSTRAINT via Slack
     for d in days:
@@ -150,12 +157,14 @@ def run_optimization(request_data: Dict[str, Any]) -> Dict[str, Any]:
 
             if required_count == 0:
                 # その日に不要な担務は新規生成しない。ただし既存ロック済みセルは尊重する。
-                model.Add(route_sum == locked_count)
+                slack_over[(d, r_id)] = model.NewIntVar(0, num_staff, f'slack_over_{d}_{r_id}')
+                model.Add(route_sum <= locked_count + slack_over[(d, r_id)])
             else:
 
                 # 欠員はソフトに許容するが、過剰配置(区の被り)は生成しない。
                 # 既にロック済みで過剰な場合だけ、ロック尊重のため上限を広げる。
-                model.Add(route_sum <= max(required_count, locked_count))
+                slack_over[(d, r_id)] = model.NewIntVar(0, num_staff, f'slack_over_{d}_{r_id}')
+                model.Add(route_sum <= max(required_count, locked_count) + slack_over[(d, r_id)])
                 slack_under[(d, r_id)] = model.NewIntVar(0, num_staff, f'slack_under_{d}_{r_id}')
                 model.Add(route_sum + slack_under[(d, r_id)] >= required_count)
 
@@ -269,6 +278,13 @@ def run_optimization(request_data: Dict[str, Any]) -> Dict[str, Any]:
             r_id = r['id']
             if (d, r_id) in slack_under:
                 objective_terms.append(slack_under[(d, r_id)] * -10000)  # 欠員を最優先で減らす
+            if (d, r_id) in slack_over:
+                objective_terms.append(slack_over[(d, r_id)] * -50000)   # 区被り/不要担務は最後の手段
+
+    for term in illegal_route_terms:
+        objective_terms.append(term * -50000)  # 能力外・勤務不可曜日の担務は最後の手段
+    for term in sunday_rule_terms:
+        objective_terms.append(term * -40000)  # 日曜休み扱い・土日担当不能者の休みを強く優先
                 
     # 連勤上限のソフト制約違反へのペナルティ。
     # 欠員ペナルティよりは軽く、しかし通常運用では十分に強い重み。
