@@ -150,6 +150,7 @@ export class Generator {
                     type: null,
                     locked: false,
                     fixed: false,
+                    dayOfWeek: new Date(Number(y), Number(m) - 1, d).getDay(),
                     isSat: JapaneseCalendar.isSaturday(dateStr),
                     isSun: JapaneseCalendar.isSunday(dateStr),
                     isHol: JapaneseCalendar.isHoliday(dateStr),
@@ -322,10 +323,10 @@ export class Generator {
                     const usableCaps = caps ? caps.filter(c => requiredRoutesToday.includes(c)) : [];
 
                     // If they have literally 0 usable skills today, they CANNOT work today! Pre-assign holiday.
-                    // Or if Ogawa Rina explicit rule:
-                    const isExplicitNoSun = s.attributes && s.attributes.noSunday && cell.isSun;
+                    // Also honor staff-level unavailable weekdays (0=Sun ... 6=Sat).
+                    const isUnavailableDay = (s.preferredOffDays || []).includes(cell.dayOfWeek);
 
-                    if ((usableCaps.length === 0) || isExplicitNoSun) {
+                    if ((usableCaps.length === 0) || isUnavailableDay) {
                         if (shukyuRemaining > 0) {
                             matrix[s.id][d].symbol = '週休';
                             matrix[s.id][d].type = 'OFF';
