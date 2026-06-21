@@ -60,7 +60,7 @@ export class Store {
             { id: '14', name: '藤田 義彦', attributes: { title: '主任', group: '二班' }, capabilities: ['11区', '12区', '13区', '弥彦早'], satCapabilities: ['弥彦早', '弥彦遅'], sunCapabilities: ['弥彦早'] },
             { id: '15', name: '吉川 賢人', attributes: { title: '地域基幹', group: '二班' }, capabilities: ['7区', '8区', '10区'], satCapabilities: [], sunCapabilities: [] },
             { id: '24', name: '永井 智之', attributes: { title: '新一般', group: '二班' }, capabilities: ['8区', '混早2'], satCapabilities: ['混早2'], sunCapabilities: [] },
-            { id: '16', name: '丸山 主', attributes: { title: '新一般', group: '二班' }, capabilities: ['11区', '12区', '13区', '弥彦早'], satCapabilities: ['弥彦早', '弥彦遅'], sunCapabilities: ['弥彦早', '弥彦遅'] },
+            { id: '16', name: '丸山 主', attributes: { title: '新一般', group: '二班' }, capabilities: ['11区', '12区', '13区', '弥彦早', '特遅'], satCapabilities: ['弥彦早', '弥彦遅', '特遅'], sunCapabilities: ['弥彦早', '弥彦遅', '特遅'] },
             { id: '17', name: '丸山 優貴', attributes: { title: '新一般', group: '二班' }, capabilities: ['8区', '9区', '10区', '12区', '混早2'], satCapabilities: ['混早2'], sunCapabilities: ['混早2'] },
             { id: '18', name: '近藤 航哉', attributes: { title: '新一般', group: '二班' }, capabilities: ['6区', '7区', '8区', '10区', '混遅2'], satCapabilities: ['混遅2'], sunCapabilities: ['混遅2', '混中2'] },
             { id: '19', name: '丸山 和弘', attributes: { title: '期間雇用', group: '二班' }, capabilities: ['11区', '13区'], satCapabilities: ['弥彦遅'], sunCapabilities: [] },

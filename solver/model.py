@@ -126,11 +126,12 @@ def run_optimization(request_data: Dict[str, Any]) -> Dict[str, Any]:
             required_today = {r['id'] for r in routes if required_count_for(r, d) > 0}
             usable_required_routes = allowed_routes.intersection(required_today)
             if (not is_locked) and (is_sat or meta.get("isSun", False)) and not meta.get("isHol", False) and not usable_required_routes:
-                # 土日祝に担当可能な必要担務が無い社員は、空欄/空き逃げではなく休みに固定する。
-                sunday_rule_terms.append(x[(s_idx, d, '空き')])
                 if meta.get("isSun", False):
-                    # 日曜に出勤しない場合、その週の休みは日曜の週休として扱う。
-                    sunday_rule_terms.extend(x[(s_idx, d, r_id)] for r_id in all_route_ids if r_id != '週休')
+                    # 日曜に出勤できない場合、その週の休みは日曜の週休として扱う。
+                    model.Add(x[(s_idx, d, '週休')] == 1)
+                elif is_sat:
+                    # 土曜に出勤できない場合、平日に非番を食わせず土曜を非番にする。
+                    model.Add(x[(s_idx, d, '非番')] == 1)
 
             if (not is_locked) and meta.get("isSun", False) and not meta.get("isHol", False):
                 # 日曜は「出勤する」または「週休」。未ロックの日曜は非番/空きにしない。
