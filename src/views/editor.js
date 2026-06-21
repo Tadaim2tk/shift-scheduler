@@ -527,6 +527,27 @@ export class EditorView {
       const ranges = this.getVisibleRangeInfo();
       const btn = container.querySelector(btnId);
       btn.innerText = 'Processing...'; btn.disabled = true;
+
+      const runJsFallback = () => {
+        btn.innerText = '自動入力中...';
+        ranges.forEach(range => {
+          this.generator.generate(range.ym, {
+            clearUnlocked: !preserveAll,
+            startDay: range.startDay,
+            endDay: range.endDay
+          });
+        });
+      };
+
+      const resultCoversVisiblePeriod = (result, payload) => {
+        if (!result?.matrix || !payload?.dateLabels) return false;
+        const expectedIndexes = Object.keys(payload.dateLabels);
+        return this.store.state.staff.every(staff => {
+          const row = result.matrix[String(staff.id)];
+          return row && expectedIndexes.every(dayIndex => row[dayIndex]);
+        });
+      };
+
       try {
         let flatDates = [];
         ranges.forEach(range => {
@@ -539,6 +560,9 @@ export class EditorView {
         const result = await SolverAPI.solve(payload);
 
         if (result.status === 'success') {
+            if (!resultCoversVisiblePeriod(result, payload)) {
+                throw new Error('Solver returned an incomplete schedule for the visible period.');
+            }
             Object.keys(result.matrix).forEach(s_id => {
                 const daysMap = result.matrix[s_id];
                 Object.keys(daysMap).forEach(idx_str => {
@@ -576,14 +600,21 @@ export class EditorView {
                 alert(`生成は完了しましたが、ルールを守ると残る欠員があります。\n\n${examples.join('\n')}${more}`);
             }
         } else {
-            alert('Optimization Error: ' + result.message);
+            throw new Error('Optimization Error: ' + result.message);
         }
         window.location.reload();
       } catch (e) { 
         console.error(e); 
-        alert('Server Error or Connection Refused. Is the Python solver running on port 8000? ' + e.message); 
-        btn.disabled = false; 
-        btn.innerText = originalText; 
+        try {
+            console.warn('Python solver unavailable. Falling back to in-browser generator.', e);
+            runJsFallback();
+            window.location.reload();
+        } catch (fallbackError) {
+            console.error(fallbackError);
+            alert('自動生成に失敗しました。Python solver とJS生成の両方でエラーが発生しました: ' + fallbackError.message);
+            btn.disabled = false;
+            btn.innerText = originalText;
+        }
       }
     };
 

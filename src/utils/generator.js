@@ -147,7 +147,7 @@ export class Generator {
         this.resolveConflicts(matrix, allStaff, targetStaff, dailySlots, startDay, endDay);
 
         console.log('[Generator] Applying to Store...');
-        this.applyMatrixToSchedule(yearMonth, matrix, state.schedule, allStaff, daysInMonth);
+        this.applyMatrixToSchedule(yearMonth, matrix, state.schedule, allStaff, startDay, endDay);
 
         return true;
     }
@@ -910,12 +910,12 @@ export class Generator {
         }
     }
 
-    applyMatrixToSchedule(yearMonth, matrix, stateSchedule, staffList, daysInMonth) {
+    applyMatrixToSchedule(yearMonth, matrix, stateSchedule, staffList, startDay, endDay) {
         if (!stateSchedule[yearMonth]) stateSchedule[yearMonth] = {};
 
         staffList.forEach(s => {
             if (!stateSchedule[yearMonth][s.id]) stateSchedule[yearMonth][s.id] = {};
-            for (let d = 1; d <= daysInMonth; d++) {
+            for (let d = startDay; d <= endDay; d++) {
                 const cell = matrix[s.id][d];
                 const dStr = String(d).padStart(2, '0');
                 if (cell.symbol) {
