@@ -72,7 +72,35 @@ export class Generator {
         return caps.includes(routeId);
     }
 
+    getUsableCapabilityCount(staff, cell, dailySlots = []) {
+        return dailySlots.filter(slot => this.canWorkRoute(staff, cell, slot.id)).length;
+    }
+
+    compareSpecialistFirst(a, b, day, matrix, dailySlots = []) {
+        const cellA = matrix[a.id][day];
+        const cellB = matrix[b.id][day];
+        const usableA = this.getUsableCapabilityCount(a, cellA, dailySlots);
+        const usableB = this.getUsableCapabilityCount(b, cellB, dailySlots);
+        if (usableA !== usableB) return usableA - usableB;
+
+        const totalA = this.getCapabilities(a, cellA.isSat, cellA.isSunOrHol).length;
+        const totalB = this.getCapabilities(b, cellB.isSat, cellB.isSunOrHol).length;
+        if (totalA !== totalB) return totalA - totalB;
+
+        return String(a.id).localeCompare(String(b.id));
+    }
+
+    holidayFreeSymbol(cell) {
+        return cell.isHol ? '祝日' : null;
+    }
+
     clearCell(cell) {
+        if (cell.isHol) {
+            cell.symbol = '祝日';
+            cell.type = 'OFF';
+            cell.fixed = true;
+            return;
+        }
         cell.symbol = null;
         cell.type = null;
         cell.fixed = false;
@@ -133,6 +161,9 @@ export class Generator {
 
         console.log('[Generator] Phase 1: Pre-Deduction');
         this.deduceAbsolutes(matrix, allStaff, targetStaff, dailySlots, startDay, endDay, false);
+
+        console.log('[Generator] Phase 1.5: Scarce Specialist Pre-Fill');
+        this.assignScarceSpecialists(matrix, targetStaff, dailySlots, startDay, endDay);
 
         console.log('[Generator] Phase 2: Holiday Distribution');
         this.distributeHolidays(matrix, targetStaff, dailySlots, startDay, endDay, yearMonth);
@@ -263,6 +294,42 @@ export class Generator {
         }
     }
 
+    assignScarceSpecialists(matrix, targetStaff, dailySlots, startDay, endDay) {
+        for (let d = startDay; d <= endDay; d++) {
+            if (!dailySlots[d]) continue;
+            const orderedSlots = [...dailySlots[d]].sort((a, b) => {
+                const capableA = targetStaff.filter(s => this.canWorkRoute(s, matrix[s.id][d], a.id)).length;
+                const capableB = targetStaff.filter(s => this.canWorkRoute(s, matrix[s.id][d], b.id)).length;
+                return capableA - capableB;
+            });
+
+            orderedSlots.forEach(req => {
+                let filled = this.countRoute(matrix, targetStaff, d, req.id);
+                if (filled >= req.count) return;
+
+                const specialists = targetStaff
+                    .filter(s => {
+                        const cell = matrix[s.id][d];
+                        if (cell.symbol && cell.symbol !== '祝日') return false;
+                        if (!this.canWorkRoute(s, cell, req.id)) return false;
+                        if (this.wouldBreakIntervals(matrix, s.id, d, req.id)) return false;
+                        const usableToday = this.getUsableCapabilityCount(s, cell, dailySlots[d]);
+                        const totalToday = this.getCapabilities(s, cell.isSat, cell.isSunOrHol).length;
+                        return usableToday === 1 || totalToday === 1;
+                    })
+                    .sort((a, b) => this.compareSpecialistFirst(a, b, d, matrix, dailySlots[d]));
+
+                for (const s of specialists) {
+                    if (filled >= req.count) break;
+                    const cell = matrix[s.id][d];
+                    cell.symbol = req.id;
+                    cell.type = 'ROUTE';
+                    filled++;
+                }
+            });
+        }
+    }
+
     wouldBreakIntervals(matrix, staffId, day, newRoute) {
         const prevSym = day > 1 ? matrix[staffId][day - 1].symbol : null;
         const nextSym = day < 31 && matrix[staffId][day + 1] ? matrix[staffId][day + 1].symbol : null;
@@ -316,6 +383,7 @@ export class Generator {
                     if (cell.isHol && !cell.symbol) {
                         cell.symbol = '祝日';
                         cell.type = 'OFF';
+                        cell.fixed = true;
                     }
                 });
             });
@@ -327,8 +395,9 @@ export class Generator {
 
             for (let d = startDay; d <= endDay; d++) {
                 const cell = matrix[s.id][d];
+                if (cell.isHol) continue;
                 // Only assign if it's open (not locked/already assigned)
-                if (!cell.symbol || cell.symbol === '祝日') {
+                if (!cell.symbol) {
                     // Count how many of their capabilities are ACTUALLY required on this day
                     const requiredRoutesToday = dailySlots[d] ? dailySlots[d].map(r => r.id) : [];
                     const usableCaps = requiredRoutesToday.filter(routeId => this.canWorkRoute(s, cell, routeId));
@@ -381,7 +450,7 @@ export class Generator {
                 }
 
                 if (!alreadyHasShukyu) {
-                    const openDays = weekDays.filter(d => !matrix[s.id][d].symbol || matrix[s.id][d].symbol === '祝日');
+                    const openDays = weekDays.filter(d => !matrix[s.id][d].symbol);
                     if (openDays.length > 0) {
                         const targetD = openDays[Math.floor(Math.random() * openDays.length)];
                         matrix[s.id][targetD].symbol = '週休';
@@ -428,10 +497,10 @@ export class Generator {
                     for (let offset = 0; offset <= biggestGap.len; offset++) {
                         const up = midDay + offset;
                         const down = midDay - offset;
-                        if (up <= biggestGap.end && (!matrix[s.id][up].symbol || matrix[s.id][up].symbol === '祝日')) {
+                        if (up <= biggestGap.end && !matrix[s.id][up].symbol) {
                             matrix[s.id][up].symbol = '非番'; matrix[s.id][up].type = 'OFF'; matrix[s.id][up].fixed = true; placed = true; break;
                         }
-                        if (down >= biggestGap.start && (!matrix[s.id][down].symbol || matrix[s.id][down].symbol === '祝日')) {
+                        if (down >= biggestGap.start && !matrix[s.id][down].symbol) {
                             matrix[s.id][down].symbol = '非番'; matrix[s.id][down].type = 'OFF'; matrix[s.id][down].fixed = true; placed = true; break;
                         }
                     }
@@ -446,7 +515,7 @@ export class Generator {
     fallbackPlaceHiban(matrix, staffId, startDay, endDay) {
         let open = [];
         for (let d = startDay; d <= endDay; d++) {
-            if (!matrix[staffId][d].symbol || matrix[staffId][d].symbol === '祝日') open.push(d);
+            if (!matrix[staffId][d].symbol) open.push(d);
         }
         if (open.length > 0) {
             const tgt = open[Math.floor(Math.random() * open.length)];
@@ -622,19 +691,21 @@ export class Generator {
             const stillMissing = [];
 
             for (const slot of missing) {
-                const directCandidate = targetStaff.find(s => {
-                    const c = matrix[s.id][slot.day];
-                    if (c.symbol && c.symbol !== '祝日') return false;
+                const directCandidate = [...targetStaff]
+                    .sort((a, b) => this.compareSpecialistFirst(a, b, slot.day, matrix, dailySlots[slot.day] || []))
+                    .find(s => {
+                        const c = matrix[s.id][slot.day];
+                        if (c.symbol && c.symbol !== '祝日') return false;
 
-                    if (!this.canWorkRoute(s, c, slot.routeId)) return false;
+                        if (!this.canWorkRoute(s, c, slot.routeId)) return false;
 
-                    matrix[s.id][slot.day].symbol = slot.routeId;
-                    const valid = this.validateHolidayRules(matrix, s.id, startDay, endDay);
-                    const validInt = !this.wouldBreakIntervals(matrix, s.id, slot.day, slot.routeId);
-                    matrix[s.id][slot.day].symbol = c.symbol === '祝日' ? '祝日' : null;
+                        matrix[s.id][slot.day].symbol = slot.routeId;
+                        const valid = this.validateHolidayRules(matrix, s.id, startDay, endDay);
+                        const validInt = !this.wouldBreakIntervals(matrix, s.id, slot.day, slot.routeId);
+                        matrix[s.id][slot.day].symbol = this.holidayFreeSymbol(c);
 
-                    return valid && validInt;
-                });
+                        return valid && validInt;
+                    });
 
                 if (directCandidate) {
                     matrix[directCandidate.id][slot.day].symbol = slot.routeId;
@@ -678,7 +749,15 @@ export class Generator {
             // The user requested extreme depth (10+ steps), so we allow up to 30.
             if (path.length > 30) continue;
 
-            for (const s of targetStaff) {
+            const candidates = [...targetStaff].sort((a, b) => {
+                const cellA = matrix[a.id][targetDay];
+                const cellB = matrix[b.id][targetDay];
+                const totalA = this.getCapabilities(a, cellA.isSat, cellA.isSunOrHol).length;
+                const totalB = this.getCapabilities(b, cellB.isSat, cellB.isSunOrHol).length;
+                return totalA - totalB;
+            });
+
+            for (const s of candidates) {
                 if (visitedStaff.has(s.id)) continue;
 
                 const cell = matrix[s.id][targetDay];
@@ -733,7 +812,15 @@ export class Generator {
     }
 
     trySwapHoliday(matrix, targetStaff, targetDay, targetRoute, startDay, endDay, yearMonth) {
-        for (const s of targetStaff) {
+        const candidates = [...targetStaff].sort((a, b) => {
+            const cellA = matrix[a.id][targetDay];
+            const cellB = matrix[b.id][targetDay];
+            const totalA = this.getCapabilities(a, cellA.isSat, cellA.isSunOrHol).length;
+            const totalB = this.getCapabilities(b, cellB.isSat, cellB.isSunOrHol).length;
+            return totalA - totalB;
+        });
+
+        for (const s of candidates) {
             const cell = matrix[s.id][targetDay];
             const currentSym = cell.symbol;
 
@@ -771,7 +858,7 @@ export class Generator {
 
             for (const altDay of validRange) {
                 const altCell = matrix[s.id][altDay];
-                if (altCell.symbol && altCell.symbol !== '祝日') continue;
+                if (altCell.symbol) continue;
 
                 const altBackup = altCell.symbol;
                 matrix[s.id][altDay].symbol = backupSym;
@@ -804,7 +891,7 @@ export class Generator {
 
             if (cDef.locked || cSur.locked) continue;
             if (cDef.symbol !== '週休' && cDef.symbol !== '非番') continue;
-            if (cSur.symbol && cSur.symbol !== '祝日') continue; // Must be "empty/surplus" on surplusDay
+            if (cSur.symbol) continue; // Rest days must move to a genuinely empty non-holiday day.
 
             // Check bounding limits for the holiday type
             const backupSym = cDef.symbol;
@@ -832,7 +919,7 @@ export class Generator {
             // Try the swap
             const altBackup = cSur.symbol;
             matrix[s.id][surplusDay].symbol = backupSym;
-            matrix[s.id][deficitDay].symbol = '祝日'; // Become surplus/available on deficit day
+            matrix[s.id][deficitDay].symbol = this.holidayFreeSymbol(cDef);
 
             const validRules = this.validateHolidayRules(matrix, s.id, startDay, endDay);
 
@@ -859,7 +946,9 @@ export class Generator {
 
                 // 1. Resolve Duplicates (Too many assigned)
                 if (assigned.length > req.count) {
-                    const unlocked = assigned.filter(s => !matrix[s.id][d].locked);
+                    const unlocked = assigned
+                        .filter(s => !matrix[s.id][d].locked)
+                        .sort((a, b) => this.compareSpecialistFirst(b, a, d, matrix, dailySlots[d] || []));
                     const overage = assigned.length - req.count;
 
                     for (let i = 0; i < overage && i < unlocked.length; i++) {
@@ -899,7 +988,7 @@ export class Generator {
                     c.symbol = backupSym;
                     c.type = backupType;
                     return valid;
-                });
+                }).sort((a, b) => this.compareSpecialistFirst(a, b, d, matrix, dailySlots[d] || []));
 
                 if (holidayStaff.length > 0) {
                     const s = holidayStaff[0];

@@ -54,6 +54,7 @@ def run_optimization(request_data: Dict[str, Any]) -> Dict[str, Any]:
             "dayOfWeek": day_of_week,
             "isSat": labels.get("isSat", False),
             "isSun": labels.get("isSun", False),
+            "isHol": labels.get("isHol", False),
             "isSunHol": labels.get("isSun", False) or labels.get("isHol", False),
         }
 
@@ -114,16 +115,24 @@ def run_optimization(request_data: Dict[str, Any]) -> Dict[str, Any]:
             if (not is_locked) and day_of_week in unavailable_days:
                 allowed_routes = set()
 
+            if (not is_locked) and meta.get("isHol", False):
+                # 祝日は通常の週休/非番ではない。出勤者以外は「祝日」休みにする。
+                # 祝日に出勤しても、別日に週休/非番を補填しない。
+                model.Add(x[(s_idx, d, '祝日')] + sum(x[(s_idx, d, r_id)] for r_id in route_ids) == 1)
+                model.Add(x[(s_idx, d, '週休')] == 0)
+                model.Add(x[(s_idx, d, '非番')] == 0)
+                model.Add(x[(s_idx, d, '空き')] == 0)
+
             required_today = {r['id'] for r in routes if required_count_for(r, d) > 0}
             usable_required_routes = allowed_routes.intersection(required_today)
-            if (not is_locked) and (is_sat or meta.get("isSun", False)) and not usable_required_routes:
+            if (not is_locked) and (is_sat or meta.get("isSun", False)) and not meta.get("isHol", False) and not usable_required_routes:
                 # 土日祝に担当可能な必要担務が無い社員は、空欄/空き逃げではなく休みに固定する。
                 sunday_rule_terms.append(x[(s_idx, d, '空き')])
                 if meta.get("isSun", False):
                     # 日曜に出勤しない場合、その週の休みは日曜の週休として扱う。
                     sunday_rule_terms.extend(x[(s_idx, d, r_id)] for r_id in all_route_ids if r_id != '週休')
 
-            if (not is_locked) and meta.get("isSun", False):
+            if (not is_locked) and meta.get("isSun", False) and not meta.get("isHol", False):
                 # 日曜は「出勤する」または「週休」。未ロックの日曜は非番/空きにしない。
                 sunday_rule_terms.append(x[(s_idx, d, '非番')])
                 sunday_rule_terms.append(x[(s_idx, d, '空き')])
@@ -250,7 +259,7 @@ def run_optimization(request_data: Dict[str, Any]) -> Dict[str, Any]:
                     elif sym == '欠': is_locked_ketsu = True
                     elif sym == '／': is_locked_block = True
             
-            if not is_locked_holiday:
+            if not is_locked_holiday and not day_meta.get(d, {}).get("isHol", False):
                 model.Add(x[(s_idx, d, '祝日')] == 0)
             if not is_locked_paid_leave:
                 model.Add(x[(s_idx, d, '年休')] == 0)
@@ -309,10 +318,13 @@ def run_optimization(request_data: Dict[str, Any]) -> Dict[str, Any]:
         caps = staff.get('weekdayCapabilities', staff.get('capabilities', []))
         choice_count = len(caps)
         
-        # 専門スタッフ（選択肢が少ない人）ほど、仕事を割り当てられた時のボーナスが大きくなる
-        # これにより、ソルバーは「森山さん（1スキル）」に優先的にその仕事を振るようになる
-        # Keep this bonus small so it never outweighs core staffing constraints.
-        specialist_bonus = max(0, max_skills_found - choice_count) * 2
+        # 専門スタッフ（選択肢が少ない人）ほど、仕事を割り当てられた時のボーナスが大きくなる。
+        # 森山/原/長谷川のような単能者を先に使うが、欠員・能力外・重複ペナルティは絶対に上回らない。
+        specialist_bonus = max(0, max_skills_found - choice_count) * 20
+        if choice_count <= 1:
+            specialist_bonus += 500
+        elif choice_count == 2:
+            specialist_bonus += 200
         
         knows_g1 = any(r in caps for r in ['1区', '2区', '3区', '4区', '5区', '6区'])
         knows_g2 = any(r in caps for r in ['7区', '8区', '9区', '10区', '11区', '12区', '13区'])
@@ -320,9 +332,21 @@ def run_optimization(request_data: Dict[str, Any]) -> Dict[str, Any]:
         primary_group = staff.get('attributes', {}).get('group', '')
         
         for d in days:
+            meta = day_meta.get(d, {})
+            if meta.get("isSunHol"):
+                day_caps = staff.get('sunCapabilities', staff.get('capabilities', []))
+            elif meta.get("isSat"):
+                day_caps = staff.get('satCapabilities', staff.get('capabilities', []))
+            else:
+                day_caps = caps
+            day_choice_count = len(day_caps)
             for r_id in route_ids:
                 # 一般的なルート担当時の専門特化ボーナス
-                objective_terms.append(x[(s_idx, d, r_id)] * specialist_bonus)
+                if r_id in day_caps:
+                    day_specialist_bonus = specialist_bonus
+                    if day_choice_count <= 1:
+                        day_specialist_bonus += 300
+                    objective_terms.append(x[(s_idx, d, r_id)] * day_specialist_bonus)
                 
                 if is_bridge:
                     # 橋渡しスタッフ（虎谷など）はなるべく難しい仕事に残しておくため、
