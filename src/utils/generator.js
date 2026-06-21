@@ -94,6 +94,10 @@ export class Generator {
         return cell.isHol ? '祝日' : null;
     }
 
+    hasUsableRequiredRoute(staff, cell, dailySlots = []) {
+        return dailySlots.some(slot => this.canWorkRoute(staff, cell, slot.id));
+    }
+
     clearCell(cell) {
         if (cell.isHol) {
             cell.symbol = '祝日';
@@ -176,6 +180,7 @@ export class Generator {
 
         console.log('[Generator] Phase 5: Conflict Resolution & Review');
         this.resolveConflicts(matrix, allStaff, targetStaff, dailySlots, startDay, endDay);
+        this.finalFillMissingRoutes(matrix, allStaff, targetStaff, dailySlots, startDay, endDay);
 
         console.log('[Generator] Applying to Store...');
         this.applyMatrixToSchedule(yearMonth, matrix, state.schedule, allStaff, startDay, endDay);
@@ -388,10 +393,35 @@ export class Generator {
                 });
             });
 
+            for (let d = startDay; d <= endDay; d++) {
+                const cell = matrix[s.id][d];
+                if (cell.locked || cell.isHol || cell.symbol) continue;
+                if (!cell.isSat && !cell.isSun) continue;
+                if (this.hasUsableRequiredRoute(s, cell, dailySlots[d] || [])) continue;
+
+                if (cell.isSun) {
+                    cell.symbol = '週休';
+                    cell.type = 'OFF';
+                    cell.fixed = true;
+                    existingShukyuCount++;
+                } else if (cell.isSat) {
+                    cell.symbol = '非番';
+                    cell.type = 'OFF';
+                    cell.fixed = true;
+                    existingHibanCount++;
+                }
+            }
+
             // 0. SMARTER HOLIDAY PRE-ASSIGNMENT FOR EXTREME SPECIALISTS
             // Identify days where staff has EXACTLY 0 capabilities.
-            let hibanRemaining = Math.max(0, hibanTarget - existingHibanCount);
-            let shukyuRemaining = Math.max(0, Math.round(periodLength / 7) - existingShukyuCount);
+            const hasWeekendWorkOption = Array.from({ length: endDay - startDay + 1 }, (_, i) => startDay + i)
+                .some(d => {
+                    const cell = matrix[s.id][d];
+                    if (cell.isHol || (!cell.isSat && !cell.isSun)) return false;
+                    return this.hasUsableRequiredRoute(s, cell, dailySlots[d] || []);
+                });
+            let hibanRemaining = hasWeekendWorkOption ? Math.max(0, hibanTarget - existingHibanCount) : 0;
+            let shukyuRemaining = hasWeekendWorkOption ? Math.max(0, Math.round(periodLength / 7) - existingShukyuCount) : 0;
 
             for (let d = startDay; d <= endDay; d++) {
                 const cell = matrix[s.id][d];
@@ -461,7 +491,7 @@ export class Generator {
             });
 
             // 2. Place exactly 'neededHiban' to break up any >5 day gaps between off days
-            let neededHiban = hibanTarget - existingHibanCount;
+            let neededHiban = hasWeekendWorkOption ? Math.max(0, hibanTarget - existingHibanCount) : 0;
             for (let i = 0; i < neededHiban; i++) {
                 let offDays = [];
                 for (let d = startDay; d <= endDay; d++) {
@@ -575,6 +605,25 @@ export class Generator {
             }
         }
 
+        return true;
+    }
+
+    respectsMaxConsecutiveWork(matrix, staffId, startDay, endDay) {
+        const staff = this.store.state.staff.find(s => String(s.id) === String(staffId));
+        const maxConsecutive = this.store.getMaxConsecutiveWork
+            ? this.store.getMaxConsecutiveWork(staff)
+            : (this.store.state.settings?.maxConsecutiveWork ?? 5);
+
+        let currentWorkStreak = 0;
+        for (let d = startDay; d <= endDay; d++) {
+            const sym = matrix[staffId][d].symbol;
+            if (this.isOffSym(sym) || sym === '祝日' || !sym) {
+                currentWorkStreak = 0;
+            } else {
+                currentWorkStreak++;
+                if (currentWorkStreak > maxConsecutive) return false;
+            }
+        }
         return true;
     }
 
@@ -996,6 +1045,58 @@ export class Generator {
                     matrix[s.id][d].type = 'ROUTE';
                 }
             });
+        }
+    }
+
+    finalFillMissingRoutes(matrix, allStaff, targetStaff, dailySlots, startDay, endDay) {
+        let changed = true;
+        let loops = 0;
+
+        while (changed && loops < 20) {
+            changed = false;
+            loops++;
+
+            for (let d = startDay; d <= endDay; d++) {
+                if (!dailySlots[d]) continue;
+
+                const missingRoutes = [];
+                dailySlots[d].forEach(req => {
+                    const shortage = req.count - this.countRoute(matrix, allStaff, d, req.id);
+                    for (let i = 0; i < shortage; i++) missingRoutes.push(req.id);
+                });
+
+                missingRoutes.forEach(routeId => {
+                    if (this.countRoute(matrix, allStaff, d, routeId) >= (dailySlots[d].find(req => req.id === routeId)?.count || 0)) {
+                        return;
+                    }
+
+                    const candidate = [...targetStaff]
+                        .sort((a, b) => this.compareSpecialistFirst(a, b, d, matrix, dailySlots[d] || []))
+                        .find(s => {
+                            const c = matrix[s.id][d];
+                            if (c.locked) return false;
+                            if (c.symbol && c.symbol !== '祝日') return false;
+                            if (!this.canWorkRoute(s, c, routeId)) return false;
+                            if (this.wouldBreakIntervals(matrix, s.id, d, routeId)) return false;
+
+                            const backupSym = c.symbol;
+                            const backupType = c.type;
+                            c.symbol = routeId;
+                            c.type = 'ROUTE';
+                            const valid = this.respectsMaxConsecutiveWork(matrix, s.id, startDay, endDay);
+                            c.symbol = backupSym;
+                            c.type = backupType;
+                            return valid;
+                        });
+
+                    if (candidate) {
+                        const c = matrix[candidate.id][d];
+                        c.symbol = routeId;
+                        c.type = 'ROUTE';
+                        changed = true;
+                    }
+                });
+            }
         }
     }
 
