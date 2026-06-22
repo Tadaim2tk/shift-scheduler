@@ -1,12 +1,10 @@
 import { Utils } from '../utils/utils.js';
-import { Generator } from '../utils/generator.js';
 import { Exporter } from '../utils/exporter.js';
 import { JapaneseCalendar } from '../utils/holidays.js';
 
 export class EditorView {
   constructor() {
     this.store = window.app.store;
-    this.generator = new Generator(this.store);
     this.currentStartDate = Utils.getCurrentStartDate();
     this.periodDays = Utils.getCurrentPeriodDays();
     // Keep currentYM for internal ref or title only, but logic drives from start date
@@ -533,20 +531,6 @@ export class EditorView {
       const preserveAll = mode === 'fill';
       const allowRepairRetry = mode === 'fill';
 
-      const runJsFallback = () => {
-        btn.innerText = '自動入力中...';
-        ranges.forEach(range => {
-          this.generator.generate(range.ym, {
-            clearUnlocked: !preserveAll,
-            startDay: range.startDay,
-            endDay: range.endDay,
-            timeBudgetMs: 12000,
-            attempts: 10
-          });
-        });
-        this.normalizeVisibleWeeklyHiban();
-      };
-
       const resultCoversVisiblePeriod = (result, payload) => {
         if (!result?.matrix || !payload?.dateLabels) return false;
         const expectedIndexes = Object.keys(payload.dateLabels);
@@ -685,16 +669,12 @@ export class EditorView {
           btn.innerText = originalText;
           return;
         }
-        try {
-          console.warn('Python solver unavailable. Falling back to in-browser generator.', e);
-          runJsFallback();
-          window.location.reload();
-        } catch (fallbackError) {
-          console.error(fallbackError);
-          alert('自動生成に失敗しました。Python solver とJS生成の両方でエラーが発生しました: ' + fallbackError.message);
-          btn.disabled = false;
-          btn.innerText = originalText;
-        }
+        const message = e.name === 'AbortError'
+          ? 'Python solver が制限時間内に応答しませんでした。弱いJS生成へ自動フォールバックすると、欠員や連勤違反を含む表が適用されるため、今回は表を変更しません。時間をおいて再実行するか、ロック/希望休を減らしてから自動リペアを実行してください。'
+          : `Python solver を実行できなかったため、表は変更しませんでした。\n\n${e.message}`;
+        alert(message);
+        btn.disabled = false;
+        btn.innerText = originalText;
       }
     };
 
