@@ -180,9 +180,12 @@ export class Generator {
 
         console.log('[Generator] Phase 5: Conflict Resolution & Review');
         this.resolveConflicts(matrix, allStaff, targetStaff, dailySlots, startDay, endDay);
-        this.finalFillMissingRoutes(matrix, allStaff, targetStaff, dailySlots, startDay, endDay);
+        this.finalFillMissingRoutes(matrix, allStaff, targetStaff, dailySlots, startDay, endDay, yearMonth);
         this.rebalanceCoveredSurplusDays(matrix, allStaff, targetStaff, dailySlots, startDay, endDay, yearMonth);
-        this.finalFillMissingRoutes(matrix, allStaff, targetStaff, dailySlots, startDay, endDay);
+        this.repairMissingWithAugmentingSearch(matrix, allStaff, targetStaff, dailySlots, startDay, endDay, yearMonth);
+        this.finalFillMissingRoutes(matrix, allStaff, targetStaff, dailySlots, startDay, endDay, yearMonth);
+        this.repairHolidayRuleViolations(matrix, allStaff, targetStaff, dailySlots, startDay, endDay, yearMonth);
+        this.finalFillMissingRoutes(matrix, allStaff, targetStaff, dailySlots, startDay, endDay, yearMonth);
 
         console.log('[Generator] Applying to Store...');
         this.applyMatrixToSchedule(yearMonth, matrix, state.schedule, allStaff, startDay, endDay);
@@ -444,11 +447,13 @@ export class Generator {
                             matrix[s.id][d].type = 'OFF';
                             matrix[s.id][d].fixed = true;
                             shukyuRemaining--;
+                            existingShukyuCount++;
                         } else if (hibanRemaining > 0) {
                             matrix[s.id][d].symbol = '非番';
                             matrix[s.id][d].type = 'OFF';
                             matrix[s.id][d].fixed = true;
                             hibanRemaining--;
+                            existingHibanCount++;
                         }
                     }
                 }
@@ -765,7 +770,7 @@ export class Generator {
                     continue;
                 }
 
-                if (this.trySwapRoute(matrix, targetStaff, slot.day, slot.routeId, startDay, endDay)) {
+                if (this.trySwapRoute(matrix, targetStaff, slot.day, slot.routeId, startDay, endDay, yearMonth, dailySlots)) {
                     changed = true;
                     continue;
                 }
@@ -781,81 +786,230 @@ export class Generator {
         }
     }
 
-    trySwapRoute(matrix, targetStaff, targetDay, targetRoute, startDay, endDay) {
-        // We use a Breadth-First Search (BFS) to find an "Augmenting Path" in the bipartite graph of Staff and Routes.
-        // This allows chains of arbitrary length: Staff A gives up Route X -> Staff B takes X, gives up Y -> Staff C takes Y, gives up "Free" (祝日).
+    isRouteAssignmentSym(sym) {
+        return !!sym && sym !== '祝日' && !this.isOffSym(sym) && sym !== '欠' && sym !== '／' && sym !== '/';
+    }
+
+    snapshotCells(matrix, refs) {
+        const seen = new Set();
+        const backup = [];
+        refs.forEach(ref => {
+            if (!ref || !ref.staffId || !ref.day || !matrix[ref.staffId] || !matrix[ref.staffId][ref.day]) return;
+            const key = `${ref.staffId}:${ref.day}`;
+            if (seen.has(key)) return;
+            seen.add(key);
+            const cell = matrix[ref.staffId][ref.day];
+            backup.push({
+                staffId: ref.staffId,
+                day: ref.day,
+                symbol: cell.symbol,
+                type: cell.type,
+                fixed: cell.fixed
+            });
+        });
+        return backup;
+    }
+
+    restoreCells(matrix, backup) {
+        backup.forEach(item => {
+            const cell = matrix[item.staffId][item.day];
+            cell.symbol = item.symbol;
+            cell.type = item.type;
+            cell.fixed = item.fixed;
+        });
+    }
+
+    snapshotRange(matrix, staffList, startDay, endDay) {
+        const refs = [];
+        staffList.forEach(staff => {
+            for (let d = startDay; d <= endDay; d++) {
+                refs.push({ staffId: staff.id, day: d });
+            }
+        });
+        return this.snapshotCells(matrix, refs);
+    }
+
+    applyRoutePath(matrix, targetDay, path) {
+        path.forEach(move => {
+            const cell = matrix[move.staff.id][targetDay];
+            cell.symbol = move.takes;
+            cell.type = 'ROUTE';
+            cell.fixed = false;
+        });
+    }
+
+    validateRoutePath(matrix, path, startDay, endDay) {
+        const staffIds = new Set(path.map(move => move.staff.id));
+        return [...staffIds].every(staffId => (
+            this.respectsMaxConsecutiveWork(matrix, staffId, startDay, endDay)
+        ));
+    }
+
+    findRestDestinations(matrix, allStaff, staff, restSymbol, fromDay, dailySlots, startDay, endDay, yearMonth) {
+        const destinationDays = [];
+        for (let d = startDay; d <= endDay; d++) {
+            if (d === fromDay) continue;
+            if (this.dayRouteShortage(matrix, allStaff, dailySlots, d) > 0) continue;
+            const destCell = matrix[staff.id][d];
+            if (destCell.locked || destCell.symbol) continue;
+            if (!this.canMoveRestBetweenDays(restSymbol, fromDay, d, yearMonth)) continue;
+            destinationDays.push(d);
+        }
+        return destinationDays.sort((a, b) => this.emptyCount(matrix, allStaff, b) - this.emptyCount(matrix, allStaff, a));
+    }
+
+    findRestDestinationOptions(matrix, allStaff, staff, restSymbol, fromDay, dailySlots, startDay, endDay, yearMonth) {
+        const options = [];
+        for (let d = startDay; d <= endDay; d++) {
+            if (d === fromDay) continue;
+            if (this.dayRouteShortage(matrix, allStaff, dailySlots, d) > 0) continue;
+            if (!this.canMoveRestBetweenDays(restSymbol, fromDay, d, yearMonth)) continue;
+
+            const destCell = matrix[staff.id][d];
+            if (destCell.locked) continue;
+
+            if (!destCell.symbol) {
+                options.push({ day: d, mode: 'empty', droppedRoute: null });
+            } else if (this.isRouteAssignmentSym(destCell.symbol)) {
+                options.push({ day: d, mode: 'route', droppedRoute: destCell.symbol });
+            }
+        }
+
+        const sorted = options.sort((a, b) => {
+            if (a.mode !== b.mode) return a.mode === 'empty' ? -1 : 1;
+            const emptyDiff = this.emptyCount(matrix, allStaff, b.day) - this.emptyCount(matrix, allStaff, a.day);
+            if (emptyDiff !== 0) return emptyDiff;
+            return Math.abs(a.day - fromDay) - Math.abs(b.day - fromDay);
+        });
+        return [
+            ...sorted.filter(option => option.mode === 'empty').slice(0, 8),
+            ...sorted.filter(option => option.mode === 'route').slice(0, 6)
+        ];
+    }
+
+    trySwapRoute(
+        matrix,
+        targetStaff,
+        targetDay,
+        targetRoute,
+        startDay,
+        endDay,
+        yearMonth = null,
+        dailySlots = {},
+        depth = 0,
+        excludedStaffIds = new Set()
+    ) {
+        // Breadth-first augmenting-path repair:
+        // fill a missing route by moving A to it, B to A's old route, and so on until
+        // the chain reaches a usable blank/holiday or a movable rest day.
+        if (depth > 3) return false;
+
+        const allStaff = this.store.state.staff || targetStaff;
+        const originalShortage = this.totalRouteShortage(matrix, allStaff, dailySlots, startDay, endDay);
         const queue = [];
         queue.push({
             routeToFill: targetRoute,
             path: [] // Array of { staff: s, takes: routeToFill, drops: currentRoute }
         });
 
-        const visitedRoutes = new Set([targetRoute]);
-        const visitedStaff = new Set();
+        const visitedStates = new Set([targetRoute]);
 
         while (queue.length > 0) {
             const { routeToFill, path } = queue.shift();
 
-            // Safety limit to prevent runaway BFS. 
-            // The user requested extreme depth (10+ steps), so we allow up to 30.
-            if (path.length > 30) continue;
+            if (path.length > 12) continue;
 
             const candidates = [...targetStaff].sort((a, b) => {
-                const cellA = matrix[a.id][targetDay];
-                const cellB = matrix[b.id][targetDay];
-                const totalA = this.getCapabilities(a, cellA.isSat, cellA.isSunOrHol).length;
-                const totalB = this.getCapabilities(b, cellB.isSat, cellB.isSunOrHol).length;
-                return totalA - totalB;
+                return this.compareSpecialistFirst(a, b, targetDay, matrix, dailySlots[targetDay] || []);
             });
 
             for (const s of candidates) {
-                if (visitedStaff.has(s.id)) continue;
+                if (excludedStaffIds.has(String(s.id))) continue;
+                if (path.some(move => String(move.staff.id) === String(s.id))) continue;
 
                 const cell = matrix[s.id][targetDay];
                 if (cell.locked) continue;
 
                 const currentSym = cell.symbol;
 
-                // Skip if the staff is on a protected holiday, missing, or already on the target route.
-                // We only allow "stealing" staff from actual Routes or '祝日' (Free).
-                if (!currentSym || this.isOffSym(currentSym) || currentSym === '欠' || currentSym === '／' || currentSym === '希') continue;
                 if (currentSym === routeToFill) continue;
-
-                // Can the staff work this route?
                 if (!this.canWorkRoute(s, cell, routeToFill)) continue;
-
-                // Will this route break their cross-day resting intervals?
                 if (this.wouldBreakIntervals(matrix, s.id, targetDay, routeToFill)) continue;
 
-                if (currentSym === '祝日') {
-                    // FOUND A FREE STAFF! This completes the augmenting path.
-                    // Let's do a final strict validation just in case.
-                    const backupSym = currentSym;
-                    matrix[s.id][targetDay].symbol = routeToFill;
-                    const isValid = this.validateHolidayRules(matrix, s.id, startDay, endDay);
-                    matrix[s.id][targetDay].symbol = backupSym;
+                if (!currentSym || currentSym === '祝日') {
+                    const finalPath = [...path, { staff: s, takes: routeToFill, drops: currentSym }];
+                    const backup = this.snapshotCells(matrix, finalPath.map(move => ({ staffId: move.staff.id, day: targetDay })));
+                    this.applyRoutePath(matrix, targetDay, finalPath);
 
-                    if (isValid) {
-                        const finalPath = [...path, { staff: s, takes: routeToFill, drops: currentSym }];
-
-                        // Apply the entire chain backwards (technically order doesn't matter on a single day since they are distinct staff)
-                        for (const move of finalPath) {
-                            matrix[move.staff.id][targetDay].symbol = move.takes;
-                            matrix[move.staff.id][targetDay].type = 'ROUTE';
-                        }
+                    if (this.validateRoutePath(matrix, finalPath, startDay, endDay) &&
+                        this.totalRouteShortage(matrix, allStaff, dailySlots, startDay, endDay) < originalShortage) {
                         return true;
                     }
-                } else {
-                    // Staff is currently on another route. We queue that route to be filled by someone else!
-                    if (!visitedRoutes.has(currentSym)) {
-                        visitedRoutes.add(currentSym);
-                        visitedStaff.add(s.id);
 
-                        queue.push({
-                            routeToFill: currentSym,
-                            path: [...path, { staff: s, takes: routeToFill, drops: currentSym }]
-                        });
+                    this.restoreCells(matrix, backup);
+                    continue;
+                }
+
+                if ((currentSym === '週休' || currentSym === '非番') && yearMonth) {
+                    const restDestinations = this.findRestDestinationOptions(
+                        matrix, allStaff, s, currentSym, targetDay, dailySlots, startDay, endDay, yearMonth
+                    );
+                    for (const option of restDestinations) {
+                        const destDay = option.day;
+                        const finalPath = [...path, { staff: s, takes: routeToFill, drops: currentSym }];
+                        const refs = finalPath.map(move => ({ staffId: move.staff.id, day: targetDay }));
+                        refs.push({ staffId: s.id, day: destDay });
+                        const backup = option.mode === 'route'
+                            ? this.snapshotRange(matrix, allStaff, startDay, endDay)
+                            : this.snapshotCells(matrix, refs);
+
+                        this.applyRoutePath(matrix, targetDay, finalPath);
+                        const destCell = matrix[s.id][destDay];
+                        destCell.symbol = currentSym;
+                        destCell.type = 'OFF';
+                        destCell.fixed = true;
+
+                        const validBase = this.validateRoutePath(matrix, finalPath, startDay, endDay) &&
+                            this.validateHolidayRules(matrix, s.id, startDay, endDay);
+
+                        if (validBase && option.mode === 'empty' &&
+                            this.dayRouteShortage(matrix, allStaff, dailySlots, destDay) === 0 &&
+                            this.totalRouteShortage(matrix, allStaff, dailySlots, startDay, endDay) < originalShortage) {
+                            return true;
+                        }
+
+                        if (validBase && option.mode === 'route') {
+                            const nestedExcluded = new Set([...excludedStaffIds, String(s.id)]);
+                            if (this.trySwapRoute(
+                                matrix,
+                                targetStaff,
+                                destDay,
+                                option.droppedRoute,
+                                startDay,
+                                endDay,
+                                yearMonth,
+                                dailySlots,
+                                depth + 1,
+                                nestedExcluded
+                            ) && this.totalRouteShortage(matrix, allStaff, dailySlots, startDay, endDay) < originalShortage) {
+                                return true;
+                            }
+                        }
+
+                        this.restoreCells(matrix, backup);
                     }
+                    continue;
+                }
+
+                if (this.isRouteAssignmentSym(currentSym)) {
+                    const stateKey = `${currentSym}:${path.map(move => move.staff.id).join(',')}:${s.id}`;
+                    if (visitedStates.has(stateKey)) continue;
+                    visitedStates.add(stateKey);
+
+                    queue.push({
+                        routeToFill: currentSym,
+                        path: [...path, { staff: s, takes: routeToFill, drops: currentSym }]
+                    });
                 }
             }
         }
@@ -1050,7 +1204,7 @@ export class Generator {
         }
     }
 
-    finalFillMissingRoutes(matrix, allStaff, targetStaff, dailySlots, startDay, endDay) {
+    finalFillMissingRoutes(matrix, allStaff, targetStaff, dailySlots, startDay, endDay, yearMonth = null) {
         let changed = true;
         let loops = 0;
 
@@ -1096,8 +1250,147 @@ export class Generator {
                         c.symbol = routeId;
                         c.type = 'ROUTE';
                         changed = true;
+                    } else if (yearMonth && this.trySwapRoute(matrix, targetStaff, d, routeId, startDay, endDay, yearMonth, dailySlots)) {
+                        changed = true;
                     }
                 });
+            }
+        }
+    }
+
+    repairMissingWithAugmentingSearch(matrix, allStaff, targetStaff, dailySlots, startDay, endDay, yearMonth) {
+        let changed = true;
+        let loops = 0;
+
+        while (changed && loops < 30) {
+            changed = false;
+            loops++;
+
+            const missing = this.getMissingRouteSlots(matrix, allStaff, dailySlots, startDay, endDay)
+                .sort((a, b) => {
+                    const capableA = targetStaff.filter(s => this.canWorkRoute(s, matrix[s.id][a.day], a.routeId)).length;
+                    const capableB = targetStaff.filter(s => this.canWorkRoute(s, matrix[s.id][b.day], b.routeId)).length;
+                    if (capableA !== capableB) return capableA - capableB;
+
+                    const emptyA = this.emptyCount(matrix, allStaff, a.day);
+                    const emptyB = this.emptyCount(matrix, allStaff, b.day);
+                    if (emptyA !== emptyB) return emptyB - emptyA;
+
+                    return a.day - b.day;
+                });
+
+            for (const slot of missing) {
+                const req = dailySlots[slot.day]?.find(r => r.id === slot.routeId);
+                if (!req || this.countRoute(matrix, allStaff, slot.day, slot.routeId) >= req.count) continue;
+
+                if (this.trySwapRoute(matrix, targetStaff, slot.day, slot.routeId, startDay, endDay, yearMonth, dailySlots)) {
+                    changed = true;
+                }
+            }
+        }
+    }
+
+    getCalendarWeekStartDay(yearMonth, day) {
+        const [y, m] = yearMonth.split('-').map(Number);
+        const date = new Date(y, m - 1, day);
+        return day - date.getDay();
+    }
+
+    hasShukyuInWeek(matrix, staffId, yearMonth, day, startDay, endDay) {
+        const weekStart = this.getCalendarWeekStartDay(yearMonth, day);
+        const weekEnd = weekStart + 6;
+        for (let d = Math.max(startDay, weekStart); d <= Math.min(endDay, weekEnd); d++) {
+            if (matrix[staffId][d]?.symbol === '週休') return true;
+        }
+        return false;
+    }
+
+    countHibanInWeek(matrix, staffId, yearMonth, day, startDay, endDay) {
+        const weekStart = this.getCalendarWeekStartDay(yearMonth, day);
+        const weekEnd = weekStart + 6;
+        let count = 0;
+        for (let d = Math.max(startDay, weekStart); d <= Math.min(endDay, weekEnd); d++) {
+            if (matrix[staffId][d]?.symbol === '非番') count++;
+        }
+        return count;
+    }
+
+    chooseInsertedRestSymbol(matrix, staff, cell, yearMonth, day, startDay, endDay) {
+        if (cell.isHol) return '祝日';
+        if (!this.hasShukyuInWeek(matrix, staff.id, yearMonth, day, startDay, endDay)) return '週休';
+        return '非番';
+    }
+
+    findRestInsertionCandidates(matrix, staff, startDay, endDay) {
+        const staffMax = this.store.getMaxConsecutiveWork
+            ? this.store.getMaxConsecutiveWork(staff)
+            : (this.store.state.settings?.maxConsecutiveWork ?? 5);
+        const streaks = [];
+        let current = [];
+
+        for (let d = startDay; d <= endDay; d++) {
+            const sym = matrix[staff.id][d].symbol;
+            if (this.isRouteAssignmentSym(sym)) {
+                current.push(d);
+            } else {
+                if (current.length > 0) streaks.push(current);
+                current = [];
+            }
+        }
+        if (current.length > 0) streaks.push(current);
+
+        const longStreakDays = streaks
+            .filter(streak => streak.length > staffMax)
+            .flatMap(streak => {
+                const center = Math.floor(streak.length / 2);
+                return [...streak].sort((a, b) => Math.abs(streak.indexOf(a) - center) - Math.abs(streak.indexOf(b) - center));
+            });
+
+        const fallbackDays = [];
+        for (let d = startDay; d <= endDay; d++) {
+            if (this.isRouteAssignmentSym(matrix[staff.id][d].symbol)) fallbackDays.push(d);
+        }
+
+        return [...new Set([...longStreakDays, ...fallbackDays])];
+    }
+
+    repairHolidayRuleViolations(matrix, allStaff, targetStaff, dailySlots, startDay, endDay, yearMonth) {
+        for (const staff of targetStaff) {
+            let attempts = 0;
+            while (!this.validateHolidayRules(matrix, staff.id, startDay, endDay) && attempts < 8) {
+                attempts++;
+                const candidates = this.findRestInsertionCandidates(matrix, staff, startDay, endDay);
+                let repaired = false;
+
+                for (const day of candidates) {
+                    const cell = matrix[staff.id][day];
+                    if (cell.locked || !this.isRouteAssignmentSym(cell.symbol)) continue;
+
+                    const droppedRoute = cell.symbol;
+                    const restSymbol = this.chooseInsertedRestSymbol(matrix, staff, cell, yearMonth, day, startDay, endDay);
+                    if (restSymbol === '非番' &&
+                        this.countHibanInWeek(matrix, staff.id, yearMonth, day, startDay, endDay) >= 2) {
+                        continue;
+                    }
+                    const beforeMissing = this.totalRouteShortage(matrix, allStaff, dailySlots, startDay, endDay);
+                    const backup = this.snapshotRange(matrix, allStaff, startDay, endDay);
+
+                    cell.symbol = restSymbol;
+                    cell.type = 'OFF';
+                    cell.fixed = true;
+
+                    const excluded = new Set([String(staff.id)]);
+                    if (this.trySwapRoute(matrix, targetStaff, day, droppedRoute, startDay, endDay, yearMonth, dailySlots, 0, excluded) &&
+                        this.totalRouteShortage(matrix, allStaff, dailySlots, startDay, endDay) <= beforeMissing &&
+                        this.totalRouteOverage(matrix, allStaff, dailySlots, startDay, endDay) === 0) {
+                        repaired = true;
+                        break;
+                    }
+
+                    this.restoreCells(matrix, backup);
+                }
+
+                if (!repaired) break;
             }
         }
     }
@@ -1119,6 +1412,25 @@ export class Generator {
         return dailySlots[day].reduce((total, req) => {
             return total + Math.max(0, req.count - this.countRoute(matrix, allStaff, day, req.id));
         }, 0);
+    }
+
+    totalRouteShortage(matrix, allStaff, dailySlots, startDay, endDay) {
+        let total = 0;
+        for (let d = startDay; d <= endDay; d++) {
+            total += this.dayRouteShortage(matrix, allStaff, dailySlots, d);
+        }
+        return total;
+    }
+
+    totalRouteOverage(matrix, allStaff, dailySlots, startDay, endDay) {
+        let total = 0;
+        for (let d = startDay; d <= endDay; d++) {
+            if (!dailySlots[d]) continue;
+            dailySlots[d].forEach(req => {
+                total += Math.max(0, this.countRoute(matrix, allStaff, d, req.id) - req.count);
+            });
+        }
+        return total;
     }
 
     emptyCount(matrix, staffList, day) {
