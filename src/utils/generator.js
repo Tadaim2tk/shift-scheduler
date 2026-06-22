@@ -181,6 +181,8 @@ export class Generator {
         console.log('[Generator] Phase 5: Conflict Resolution & Review');
         this.resolveConflicts(matrix, allStaff, targetStaff, dailySlots, startDay, endDay);
         this.finalFillMissingRoutes(matrix, allStaff, targetStaff, dailySlots, startDay, endDay);
+        this.rebalanceCoveredSurplusDays(matrix, allStaff, targetStaff, dailySlots, startDay, endDay, yearMonth);
+        this.finalFillMissingRoutes(matrix, allStaff, targetStaff, dailySlots, startDay, endDay);
 
         console.log('[Generator] Applying to Store...');
         this.applyMatrixToSchedule(yearMonth, matrix, state.schedule, allStaff, startDay, endDay);
@@ -1096,6 +1098,133 @@ export class Generator {
                         changed = true;
                     }
                 });
+            }
+        }
+    }
+
+    getMissingRouteSlots(matrix, allStaff, dailySlots, startDay, endDay) {
+        const missing = [];
+        for (let d = startDay; d <= endDay; d++) {
+            if (!dailySlots[d]) continue;
+            dailySlots[d].forEach(req => {
+                const shortage = req.count - this.countRoute(matrix, allStaff, d, req.id);
+                for (let i = 0; i < shortage; i++) missing.push({ day: d, routeId: req.id });
+            });
+        }
+        return missing;
+    }
+
+    dayRouteShortage(matrix, allStaff, dailySlots, day) {
+        if (!dailySlots[day]) return 0;
+        return dailySlots[day].reduce((total, req) => {
+            return total + Math.max(0, req.count - this.countRoute(matrix, allStaff, day, req.id));
+        }, 0);
+    }
+
+    emptyCount(matrix, staffList, day) {
+        return staffList.reduce((count, staff) => {
+            const sym = matrix[staff.id][day].symbol;
+            return count + (!sym || sym === '祝日' ? 1 : 0);
+        }, 0);
+    }
+
+    canMoveRestBetweenDays(restSymbol, fromDay, toDay, yearMonth) {
+        if (restSymbol === '非番') {
+            return Math.abs(toDay - fromDay) <= 3;
+        }
+        if (restSymbol === '週休') {
+            const [y, m] = yearMonth.split('-').map(Number);
+            const fromDate = new Date(y, m - 1, fromDay);
+            const toDate = new Date(y, m - 1, toDay);
+            const fromWeekStart = new Date(fromDate);
+            fromWeekStart.setDate(fromDate.getDate() - fromDate.getDay());
+            const toWeekStart = new Date(toDate);
+            toWeekStart.setDate(toDate.getDate() - toDate.getDay());
+            return fromWeekStart.getTime() === toWeekStart.getTime();
+        }
+        return false;
+    }
+
+    rebalanceCoveredSurplusDays(matrix, allStaff, targetStaff, dailySlots, startDay, endDay, yearMonth) {
+        let changed = true;
+        let loops = 0;
+
+        while (changed && loops < 50) {
+            changed = false;
+            loops++;
+
+            const missing = this.getMissingRouteSlots(matrix, allStaff, dailySlots, startDay, endDay)
+                .sort((a, b) => {
+                    const capableA = targetStaff.filter(s => this.canWorkRoute(s, matrix[s.id][a.day], a.routeId)).length;
+                    const capableB = targetStaff.filter(s => this.canWorkRoute(s, matrix[s.id][b.day], b.routeId)).length;
+                    return capableA - capableB;
+                });
+
+            for (const slot of missing) {
+                if (this.countRoute(matrix, allStaff, slot.day, slot.routeId) >= (dailySlots[slot.day].find(req => req.id === slot.routeId)?.count || 0)) {
+                    continue;
+                }
+
+                const restCandidates = [...targetStaff]
+                    .filter(s => {
+                        const c = matrix[s.id][slot.day];
+                        if (c.locked) return false;
+                        if (c.symbol !== '週休' && c.symbol !== '非番') return false;
+                        if (!this.canWorkRoute(s, c, slot.routeId)) return false;
+                        if (this.wouldBreakIntervals(matrix, s.id, slot.day, slot.routeId)) return false;
+                        return true;
+                    })
+                    .sort((a, b) => this.compareSpecialistFirst(a, b, slot.day, matrix, dailySlots[slot.day] || []));
+
+                for (const staff of restCandidates) {
+                    const sourceCell = matrix[staff.id][slot.day];
+                    const restSymbol = sourceCell.symbol;
+                    const destinationDays = [];
+
+                    for (let d = startDay; d <= endDay; d++) {
+                        if (d === slot.day) continue;
+                        if (this.dayRouteShortage(matrix, allStaff, dailySlots, d) > 0) continue;
+                        const destCell = matrix[staff.id][d];
+                        if (destCell.locked || destCell.symbol) continue;
+                        if (!this.canMoveRestBetweenDays(restSymbol, slot.day, d, yearMonth)) continue;
+                        destinationDays.push(d);
+                    }
+
+                    destinationDays.sort((a, b) => this.emptyCount(matrix, allStaff, b) - this.emptyCount(matrix, allStaff, a));
+
+                    for (const destDay of destinationDays) {
+                        const destCell = matrix[staff.id][destDay];
+                        const sourceBackup = { symbol: sourceCell.symbol, type: sourceCell.type, fixed: sourceCell.fixed };
+                        const destBackup = { symbol: destCell.symbol, type: destCell.type, fixed: destCell.fixed };
+
+                        sourceCell.symbol = slot.routeId;
+                        sourceCell.type = 'ROUTE';
+                        sourceCell.fixed = false;
+                        destCell.symbol = restSymbol;
+                        destCell.type = 'OFF';
+                        destCell.fixed = true;
+
+                        const valid = this.validateHolidayRules(matrix, staff.id, startDay, endDay) &&
+                            !this.wouldBreakIntervals(matrix, staff.id, slot.day, slot.routeId) &&
+                            this.dayRouteShortage(matrix, allStaff, dailySlots, destDay) === 0;
+
+                        if (valid) {
+                            changed = true;
+                            break;
+                        }
+
+                        sourceCell.symbol = sourceBackup.symbol;
+                        sourceCell.type = sourceBackup.type;
+                        sourceCell.fixed = sourceBackup.fixed;
+                        destCell.symbol = destBackup.symbol;
+                        destCell.type = destBackup.type;
+                        destCell.fixed = destBackup.fixed;
+                    }
+
+                    if (changed) break;
+                }
+
+                if (changed) break;
             }
         }
     }
