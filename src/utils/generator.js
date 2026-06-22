@@ -5,6 +5,11 @@ export class Generator {
     constructor(store) {
         this.store = store;
         this.constraints = new ShiftConstraints(store);
+        this.generationDeadline = 0;
+    }
+
+    isGenerationTimeUp() {
+        return this.generationDeadline > 0 && Date.now() > this.generationDeadline;
     }
 
     getScheduleSym(staffId, dateStr) {
@@ -146,13 +151,11 @@ export class Generator {
     // MAIN GENERATOR PIPELINE (SUDOKU APPROACH)
     // ==========================================
     generate(yearMonth, options = {}) {
-        const { clearUnlocked = true, startDay = 1, endDay = 31 } = options;
+        const { clearUnlocked = true, startDay = 1, endDay = 31, timeBudgetMs = 10000, attempts = 6 } = options;
         const state = this.store.state;
         const daysInMonth = this.getDaysInMonth(yearMonth);
         const allStaff = state.staff;
         const targetStaff = state.staff.filter(s => !(s.attributes && s.attributes.type === 'helper'));
-
-        const matrix = this.buildInitialMatrix(yearMonth, daysInMonth, allStaff, state.schedule, clearUnlocked);
 
         const dailySlots = {};
         for (let d = startDay; d <= endDay; d++) {
@@ -163,6 +166,41 @@ export class Generator {
             dailySlots[d] = this.getRequiredRoutes(state.routes, isSat, isSunOrHol, daySettings.extraRoutes || []);
         }
 
+        const baseSchedule = JSON.parse(JSON.stringify(state.schedule || {}));
+        const totalDeadline = Date.now() + timeBudgetMs;
+        let bestMatrix = null;
+        let bestScore = null;
+
+        for (let attempt = 0; attempt < attempts && Date.now() < totalDeadline; attempt++) {
+            const remainingAttempts = attempts - attempt;
+            const remainingMs = Math.max(500, totalDeadline - Date.now());
+            this.generationDeadline = Date.now() + Math.max(500, Math.floor(remainingMs / remainingAttempts));
+
+            const matrix = this.buildInitialMatrix(yearMonth, daysInMonth, allStaff, baseSchedule, clearUnlocked);
+            this.runGenerationPipeline(matrix, allStaff, targetStaff, dailySlots, startDay, endDay, yearMonth);
+            const score = this.scoreMatrix(matrix, allStaff, targetStaff, dailySlots, startDay, endDay);
+
+            if (!bestScore || score.value < bestScore.value) {
+                bestMatrix = matrix;
+                bestScore = score;
+            }
+
+            if (score.missing === 0 && score.overage === 0 && score.invalidAssignments === 0 && score.holidayViolations === 0) {
+                break;
+            }
+        }
+
+        this.generationDeadline = 0;
+        if (!bestMatrix) return false;
+
+        console.log('[Generator] Best score:', bestScore);
+        console.log('[Generator] Applying to Store...');
+        this.applyMatrixToSchedule(yearMonth, bestMatrix, state.schedule, allStaff, startDay, endDay);
+
+        return true;
+    }
+
+    runGenerationPipeline(matrix, allStaff, targetStaff, dailySlots, startDay, endDay, yearMonth) {
         console.log('[Generator] Phase 1: Pre-Deduction');
         this.deduceAbsolutes(matrix, allStaff, targetStaff, dailySlots, startDay, endDay, false);
 
@@ -181,16 +219,49 @@ export class Generator {
         console.log('[Generator] Phase 5: Conflict Resolution & Review');
         this.resolveConflicts(matrix, allStaff, targetStaff, dailySlots, startDay, endDay);
         this.finalFillMissingRoutes(matrix, allStaff, targetStaff, dailySlots, startDay, endDay, yearMonth);
-        this.rebalanceCoveredSurplusDays(matrix, allStaff, targetStaff, dailySlots, startDay, endDay, yearMonth);
-        this.repairMissingWithAugmentingSearch(matrix, allStaff, targetStaff, dailySlots, startDay, endDay, yearMonth);
-        this.finalFillMissingRoutes(matrix, allStaff, targetStaff, dailySlots, startDay, endDay, yearMonth);
-        this.repairHolidayRuleViolations(matrix, allStaff, targetStaff, dailySlots, startDay, endDay, yearMonth);
-        this.finalFillMissingRoutes(matrix, allStaff, targetStaff, dailySlots, startDay, endDay, yearMonth);
+        if (!this.isGenerationTimeUp()) {
+            this.rebalanceCoveredSurplusDays(matrix, allStaff, targetStaff, dailySlots, startDay, endDay, yearMonth);
+        }
+        if (!this.isGenerationTimeUp()) {
+            this.repairMissingWithAugmentingSearch(matrix, allStaff, targetStaff, dailySlots, startDay, endDay, yearMonth);
+        }
+        if (!this.isGenerationTimeUp()) {
+            this.finalFillMissingRoutes(matrix, allStaff, targetStaff, dailySlots, startDay, endDay, yearMonth);
+        }
+        if (!this.isGenerationTimeUp()) {
+            this.repairHolidayRuleViolations(matrix, allStaff, targetStaff, dailySlots, startDay, endDay, yearMonth);
+        }
+        if (!this.isGenerationTimeUp()) {
+            this.finalFillMissingRoutes(matrix, allStaff, targetStaff, dailySlots, startDay, endDay, yearMonth);
+        }
+    }
 
-        console.log('[Generator] Applying to Store...');
-        this.applyMatrixToSchedule(yearMonth, matrix, state.schedule, allStaff, startDay, endDay);
+    scoreMatrix(matrix, allStaff, targetStaff, dailySlots, startDay, endDay) {
+        const missing = this.totalRouteShortage(matrix, allStaff, dailySlots, startDay, endDay);
+        const overage = this.totalRouteOverage(matrix, allStaff, dailySlots, startDay, endDay);
+        let invalidAssignments = 0;
+        let holidayViolations = 0;
 
-        return true;
+        for (let d = startDay; d <= endDay; d++) {
+            targetStaff.forEach(staff => {
+                const cell = matrix[staff.id][d];
+                if (this.isRouteAssignmentSym(cell.symbol) && !this.canWorkRoute(staff, cell, cell.symbol)) {
+                    invalidAssignments++;
+                }
+            });
+        }
+
+        targetStaff.forEach(staff => {
+            if (!this.validateHolidayRules(matrix, staff.id, startDay, endDay)) holidayViolations++;
+        });
+
+        return {
+            missing,
+            overage,
+            invalidAssignments,
+            holidayViolations,
+            value: missing * 100000 + overage * 100000 + invalidAssignments * 100000 + holidayViolations * 1000
+        };
     }
 
     buildInitialMatrix(yearMonth, daysInMonth, staffList, schedules, clearUnlocked) {
@@ -678,7 +749,7 @@ export class Generator {
         // --- PRE-BALANCE: Move Holidays from Deficit Days to Surplus Days ---
         let preBalanceChanged = true;
         let preBalanceLoops = 0;
-        while (preBalanceChanged && preBalanceLoops < 100) {
+        while (preBalanceChanged && preBalanceLoops < 20 && !this.isGenerationTimeUp()) {
             preBalanceChanged = false;
             preBalanceLoops++;
 
@@ -741,12 +812,16 @@ export class Generator {
 
         // Loop aggressively until no more changes can be made or all missing slots are filled.
         // We use a high safety limit (2000) to prevent true infinite loops, but rely on `changed` to break early.
-        while (missing.length > 0 && changed && iterations < 2000) {
+        while (missing.length > 0 && changed && iterations < 200 && !this.isGenerationTimeUp()) {
             changed = false;
             iterations++;
             const stillMissing = [];
 
             for (const slot of missing) {
+                if (this.isGenerationTimeUp()) {
+                    stillMissing.push(slot);
+                    continue;
+                }
                 const directCandidate = [...targetStaff]
                     .sort((a, b) => this.compareSpecialistFirst(a, b, slot.day, matrix, dailySlots[slot.day] || []))
                     .find(s => {
@@ -882,8 +957,8 @@ export class Generator {
             return Math.abs(a.day - fromDay) - Math.abs(b.day - fromDay);
         });
         return [
-            ...sorted.filter(option => option.mode === 'empty').slice(0, 8),
-            ...sorted.filter(option => option.mode === 'route').slice(0, 6)
+            ...sorted.filter(option => option.mode === 'empty').slice(0, 5),
+            ...sorted.filter(option => option.mode === 'route').slice(0, 3)
         ];
     }
 
@@ -902,7 +977,7 @@ export class Generator {
         // Breadth-first augmenting-path repair:
         // fill a missing route by moving A to it, B to A's old route, and so on until
         // the chain reaches a usable blank/holiday or a movable rest day.
-        if (depth > 3) return false;
+        if (depth > 2 || this.isGenerationTimeUp()) return false;
 
         const allStaff = this.store.state.staff || targetStaff;
         const originalShortage = this.totalRouteShortage(matrix, allStaff, dailySlots, startDay, endDay);
@@ -915,9 +990,10 @@ export class Generator {
         const visitedStates = new Set([targetRoute]);
 
         while (queue.length > 0) {
+            if (this.isGenerationTimeUp()) return false;
             const { routeToFill, path } = queue.shift();
 
-            if (path.length > 12) continue;
+            if (path.length > 10) continue;
 
             const candidates = [...targetStaff].sort((a, b) => {
                 return this.compareSpecialistFirst(a, b, targetDay, matrix, dailySlots[targetDay] || []);
@@ -955,6 +1031,7 @@ export class Generator {
                         matrix, allStaff, s, currentSym, targetDay, dailySlots, startDay, endDay, yearMonth
                     );
                     for (const option of restDestinations) {
+                        if (this.isGenerationTimeUp()) return false;
                         const destDay = option.day;
                         const finalPath = [...path, { staff: s, takes: routeToFill, drops: currentSym }];
                         const refs = finalPath.map(move => ({ staffId: move.staff.id, day: targetDay }));
@@ -1208,11 +1285,12 @@ export class Generator {
         let changed = true;
         let loops = 0;
 
-        while (changed && loops < 20) {
+        while (changed && loops < 10 && !this.isGenerationTimeUp()) {
             changed = false;
             loops++;
 
             for (let d = startDay; d <= endDay; d++) {
+                if (this.isGenerationTimeUp()) break;
                 if (!dailySlots[d]) continue;
 
                 const missingRoutes = [];
@@ -1222,6 +1300,7 @@ export class Generator {
                 });
 
                 missingRoutes.forEach(routeId => {
+                    if (this.isGenerationTimeUp()) return;
                     if (this.countRoute(matrix, allStaff, d, routeId) >= (dailySlots[d].find(req => req.id === routeId)?.count || 0)) {
                         return;
                     }
@@ -1262,7 +1341,7 @@ export class Generator {
         let changed = true;
         let loops = 0;
 
-        while (changed && loops < 30) {
+        while (changed && loops < 8 && !this.isGenerationTimeUp()) {
             changed = false;
             loops++;
 
@@ -1280,6 +1359,7 @@ export class Generator {
                 });
 
             for (const slot of missing) {
+                if (this.isGenerationTimeUp()) break;
                 const req = dailySlots[slot.day]?.find(r => r.id === slot.routeId);
                 if (!req || this.countRoute(matrix, allStaff, slot.day, slot.routeId) >= req.count) continue;
 
@@ -1357,12 +1437,13 @@ export class Generator {
     repairHolidayRuleViolations(matrix, allStaff, targetStaff, dailySlots, startDay, endDay, yearMonth) {
         for (const staff of targetStaff) {
             let attempts = 0;
-            while (!this.validateHolidayRules(matrix, staff.id, startDay, endDay) && attempts < 8) {
+            while (!this.isGenerationTimeUp() && !this.validateHolidayRules(matrix, staff.id, startDay, endDay) && attempts < 4) {
                 attempts++;
                 const candidates = this.findRestInsertionCandidates(matrix, staff, startDay, endDay);
                 let repaired = false;
 
                 for (const day of candidates) {
+                    if (this.isGenerationTimeUp()) break;
                     const cell = matrix[staff.id][day];
                     if (cell.locked || !this.isRouteAssignmentSym(cell.symbol)) continue;
 
