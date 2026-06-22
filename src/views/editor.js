@@ -1,10 +1,12 @@
 import { Utils } from '../utils/utils.js';
+import { Generator } from '../utils/generator.js';
 import { Exporter } from '../utils/exporter.js';
 import { JapaneseCalendar } from '../utils/holidays.js';
 
 export class EditorView {
   constructor() {
     this.store = window.app.store;
+    this.generator = new Generator(this.store);
     this.currentStartDate = Utils.getCurrentStartDate();
     this.periodDays = Utils.getCurrentPeriodDays();
     // Keep currentYM for internal ref or title only, but logic drives from start date
@@ -528,8 +530,29 @@ export class EditorView {
       const btn = container.querySelector(btnId);
       btn.innerText = 'Solving...'; btn.disabled = true;
 
-      const preserveAll = mode === 'fill';
-      const allowRepairRetry = mode === 'fill';
+      // Lower score = better schedule.  Coverage is most important, then hard
+      // business violations, then rest-rule softness.
+      const qualityScore = (result) => {
+        const m = result?.metrics || {};
+        return (m.underfill || 0) * 1e7
+          + (m.illegalAssignments || 0) * 1e6
+          + (m.overfill || 0) * 1e5
+          + (m.weeklyRestViolations || 0) * 1e3
+          + (m.minOffViolations || 0) * 1e2
+          + (m.consecutiveViolations || 0) * 10;
+      };
+
+      // Issues the planner can realistically fix by editing locks / requirements.
+      // 4週8休 shortfalls for single-skill staff are structural and are reported
+      // as info, not treated as a generation failure.
+      const actionableScore = (result) => {
+        const m = result?.metrics || {};
+        return (m.underfill || 0) * 1e7
+          + (m.illegalAssignments || 0) * 1e6
+          + (m.overfill || 0) * 1e5
+          + (m.weeklyRestViolations || 0) * 1e3
+          + (m.consecutiveViolations || 0) * 10;
+      };
 
       const resultCoversVisiblePeriod = (result, payload) => {
         if (!result?.matrix || !payload?.dateLabels) return false;
@@ -561,29 +584,9 @@ export class EditorView {
           `重複/不要:${m.overfill ?? 0}`,
           `週休非番違反:${m.weeklyRestViolations ?? 0}`,
           `連勤違反:${m.consecutiveViolations ?? 0}`,
+          `4週休不足:${m.minOffViolations ?? 0}`,
           `変更:${changed}`
         ].join(' / ');
-      };
-
-      const validateSolverResult = (result, payload) => {
-        if (!resultCoversVisiblePeriod(result, payload)) {
-          throw Object.assign(new Error('Solver returned an incomplete schedule for the visible period.'), { solverRejected: true, result });
-        }
-        if (result.unfilledRequirements?.length) {
-          throw Object.assign(new Error('Solver returned a schedule with unfilled requirements.'), { solverRejected: true, result });
-        }
-        if (result.overfilledRequirements?.length) {
-          throw Object.assign(new Error('Solver returned a schedule with duplicate or unnecessary route assignments.'), { solverRejected: true, result });
-        }
-        const issues = this.getSolverResultIssues(result, payload);
-        if (issues.total > 0) {
-          const parts = [];
-          if (issues.missing > 0) parts.push(`missing ${issues.missing}`);
-          if (issues.invalid > 0) parts.push(`invalid ${issues.invalid}`);
-          if (issues.streak > 0) parts.push(`streak ${issues.streak}`);
-          if (issues.hiban > 0) parts.push(`hiban ${issues.hiban}`);
-          throw Object.assign(new Error(`Solver returned a locally invalid schedule: ${parts.join(', ')}`), { solverRejected: true, result, issues });
-        }
       };
 
       const applySolverResult = (result, payload, effectiveMode) => {
@@ -614,14 +617,34 @@ export class EditorView {
         });
       };
 
+      // Throws only when the solver could not produce a usable schedule at all
+      // (network/timeout/error or a structurally incomplete matrix).  A schedule
+      // with residual shortages or soft-rule violations is NOT thrown away: it is
+      // genuine progress and is applied so repeated runs can keep improving it.
       const solveOnce = async (flatDates, effectiveMode) => {
         const payload = SolverAPI.buildPayload(this.store, flatDates, effectiveMode === 'fill', effectiveMode);
         const result = await SolverAPI.solve(payload);
         if (result.status !== 'success') {
-          throw Object.assign(new Error('Optimization Error: ' + result.message), { solverRejected: true, result });
+          throw Object.assign(new Error('Optimization Error: ' + result.message), { solverFailed: true, result });
         }
-        validateSolverResult(result, payload);
-        return { payload, result };
+        if (!resultCoversVisiblePeriod(result, payload)) {
+          throw Object.assign(new Error('Solver returned an incomplete schedule for the visible period.'), { solverFailed: true, result });
+        }
+        return { payload, result, mode: effectiveMode };
+      };
+
+      const runJsFallback = () => {
+        btn.innerText = '自動入力中...';
+        ranges.forEach(range => {
+          this.generator.generate(range.ym, {
+            clearUnlocked: mode !== 'fill',
+            startDay: range.startDay,
+            endDay: range.endDay,
+            timeBudgetMs: 12000,
+            attempts: 10
+          });
+        });
+        this.normalizeVisibleWeeklyHiban();
       };
 
       try {
@@ -632,49 +655,80 @@ export class EditorView {
           }
         });
 
-        let effectiveMode = mode;
-        let solved;
-        try {
-          solved = await solveOnce(flatDates, mode);
-        } catch (e) {
-          if (allowRepairRetry && e.solverRejected) {
-            console.warn('Fill-only solve was rejected. Retrying in repair mode.', e);
-            btn.innerText = 'Repairing...';
-            effectiveMode = 'repair';
-            solved = await solveOnce(flatDates, 'repair');
-          } else {
-            throw e;
+        const candidates = [];
+        const primary = await solveOnce(flatDates, mode);
+        candidates.push(primary);
+
+        // If the requested mode still leaves shortages/violations, try the more
+        // flexible repair pass (it may move non-locked cells) and keep whichever
+        // result is better.
+        if (mode !== 'repair' && qualityScore(primary.result) > 0) {
+          btn.innerText = 'Repairing...';
+          try {
+            candidates.push(await solveOnce(flatDates, 'repair'));
+          } catch (repairError) {
+            console.warn('Repair pass failed; keeping primary result.', repairError);
           }
         }
 
-        applySolverResult(solved.result, solved.payload, effectiveMode);
-        const changed = solved.result.changedCells?.length || 0;
-        if (effectiveMode === 'repair' && (mode !== 'repair' || changed > 0)) {
-          const sample = (solved.result.changedCells || []).slice(0, 8).map(item => `${item.date} ${item.staffId}: ${item.from}→${item.to}`);
-          const detail = sample.length ? `\n\n変更例:\n${sample.join('\n')}${changed > sample.length ? `\nほか ${changed - sample.length} 件` : ''}` : '';
-          alert(`空き枠固定では解けなかったため、自動リペアで既存配置を必要最小限だけ動かしました。\n${summarizeMetrics(solved.result)}${detail}`);
+        candidates.sort((a, b) => {
+          const qa = qualityScore(a.result);
+          const qb = qualityScore(b.result);
+          if (qa !== qb) return qa - qb;
+          const ca = a.result.changedCells?.length || 0;
+          const cb = b.result.changedCells?.length || 0;
+          return ca - cb;
+        });
+        const best = candidates[0];
+
+        applySolverResult(best.result, best.payload, best.mode);
+
+        const changed = best.result.changedCells?.length || 0;
+        const usedRepair = best.mode === 'repair' && mode !== 'repair';
+        const minOff = best.result.metrics?.minOffViolations || 0;
+        if (actionableScore(best.result) === 0) {
+          // No fixable problems remain.  Report repair moves and any structural
+          // 4週8休 shortfall as information only.
+          const notes = [];
+          if (usedRepair && changed > 0) {
+            const sample = (best.result.changedCells || []).slice(0, 8).map(item => `${item.date} ${item.staffId}: ${item.from}→${item.to}`);
+            const more = changed > sample.length ? `\nほか ${changed - sample.length} 件` : '';
+            notes.push(`空き枠固定では解けなかったため、自動リペアで既存配置を ${changed} 箇所だけ動かして解消しました。\n変更例:\n${sample.join('\n')}${more}`);
+          }
+          if (minOff > 0) {
+            notes.push(`なお、担当・固定休の都合で4週8休に届かない社員が ${minOff} 件分あります（構造的な制約のため、担当範囲を増やすか休日要件を見直さない限り解消できません）。`);
+          }
+          if (notes.length) alert(`生成しました。\n${summarizeMetrics(best.result)}\n\n${notes.join('\n\n')}`);
+        } else {
+          const unfilled = summarizeUnfilled(best.result);
+          const body = [
+            'ベストな結果を反映しました（完全には解消できない課題が残っています）。',
+            summarizeMetrics(best.result),
+          ];
+          if (unfilled) body.push('\n欠員の内訳:\n' + unfilled);
+          body.push('\nロック（鍵マーク）や希望休が多いと、本来動かせる人を動かせず欠員や違反が残ります。該当セルのロックを外して「自動リペア」を再実行すると改善する場合があります。');
+          alert(body.join('\n'));
         }
         window.location.reload();
       } catch (e) {
         console.error(e);
-        if (e.solverRejected) {
-          const result = e.result;
-          const unfilled = summarizeUnfilled(result);
-          const metrics = summarizeMetrics(result);
-          const message = unfilled
-            ? `Python solver は解を返しましたが、採用基準を満たさないため反映しませんでした。\n${metrics}\n\n残った欠員:\n${unfilled}`
-            : `Python solver は解を返しましたが、ローカル検証で不採用になりました。\n${metrics}\n\n${e.message}`;
-          alert(message);
+        // The Python solver itself could not return a schedule (timeout / network
+        // / server error).  Apply the in-browser generator as a last resort so the
+        // table still makes progress, but label it clearly.
+        try {
+          console.warn('Python solver unavailable. Falling back to in-browser generator.', e);
+          runJsFallback();
+          const reason = e.name === 'AbortError'
+            ? 'Python solver が時間内に応答しませんでした'
+            : 'Python solver に接続できませんでした';
+          alert(`${reason}。\n簡易のブラウザ内生成で暫定的に表を更新しました（最適化ソルバーより品質は劣ります）。\n時間をおいて「自動リペア」を再実行すると改善します。`);
+          window.location.reload();
+        } catch (fallbackError) {
+          console.error(fallbackError);
+          alert('自動生成に失敗しました。Python solver とJS生成の両方でエラーが発生しました: ' + fallbackError.message);
           btn.disabled = false;
           btn.innerText = originalText;
-          return;
         }
-        const message = e.name === 'AbortError'
-          ? 'Python solver が制限時間内に応答しませんでした。弱いJS生成へ自動フォールバックすると、欠員や連勤違反を含む表が適用されるため、今回は表を変更しません。時間をおいて再実行するか、ロック/希望休を減らしてから自動リペアを実行してください。'
-          : `Python solver を実行できなかったため、表は変更しませんでした。\n\n${e.message}`;
-        alert(message);
-        btn.disabled = false;
-        btn.innerText = originalText;
       }
     };
 
