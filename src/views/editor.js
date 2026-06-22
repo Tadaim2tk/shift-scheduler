@@ -535,8 +535,8 @@ export class EditorView {
             clearUnlocked: !preserveAll,
             startDay: range.startDay,
             endDay: range.endDay,
-            timeBudgetMs: 10000,
-            attempts: 6
+            timeBudgetMs: 12000,
+            attempts: 10
           });
         });
       };
@@ -564,6 +564,9 @@ export class EditorView {
         if (result.status === 'success') {
             if (!resultCoversVisiblePeriod(result, payload)) {
                 throw new Error('Solver returned an incomplete schedule for the visible period.');
+            }
+            if (result.unfilledRequirements?.length) {
+                throw new Error('Solver returned a schedule with unfilled requirements.');
             }
             Object.keys(result.matrix).forEach(s_id => {
                 const daysMap = result.matrix[s_id];

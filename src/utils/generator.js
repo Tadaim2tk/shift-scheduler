@@ -151,7 +151,7 @@ export class Generator {
     // MAIN GENERATOR PIPELINE (SUDOKU APPROACH)
     // ==========================================
     generate(yearMonth, options = {}) {
-        const { clearUnlocked = true, startDay = 1, endDay = 31, timeBudgetMs = 10000, attempts = 6 } = options;
+        const { clearUnlocked = true, startDay = 1, endDay = 31, timeBudgetMs = 12000, attempts = 10 } = options;
         const state = this.store.state;
         const daysInMonth = this.getDaysInMonth(yearMonth);
         const allStaff = state.staff;
@@ -185,7 +185,11 @@ export class Generator {
                 bestScore = score;
             }
 
-            if (score.missing === 0 && score.overage === 0 && score.invalidAssignments === 0 && score.holidayViolations === 0) {
+            if (score.missing === 0 &&
+                score.overage === 0 &&
+                score.invalidAssignments === 0 &&
+                score.holidayViolations === 0 &&
+                score.maxBlankPerDay <= 2) {
                 break;
             }
         }
@@ -234,6 +238,9 @@ export class Generator {
         if (!this.isGenerationTimeUp()) {
             this.finalFillMissingRoutes(matrix, allStaff, targetStaff, dailySlots, startDay, endDay, yearMonth);
         }
+        if (!this.isGenerationTimeUp()) {
+            this.labelSurplusBlanks(matrix, allStaff, targetStaff, dailySlots, startDay, endDay, yearMonth);
+        }
     }
 
     scoreMatrix(matrix, allStaff, targetStaff, dailySlots, startDay, endDay) {
@@ -241,8 +248,21 @@ export class Generator {
         const overage = this.totalRouteOverage(matrix, allStaff, dailySlots, startDay, endDay);
         let invalidAssignments = 0;
         let holidayViolations = 0;
+        let totalBlank = 0;
+        let blankSquares = 0;
+        let maxBlankPerDay = 0;
+        let missingBlankConflict = 0;
 
         for (let d = startDay; d <= endDay; d++) {
+            const blank = this.blankCount(matrix, targetStaff, d);
+            const shortage = this.dayRouteShortage(matrix, allStaff, dailySlots, d);
+            totalBlank += blank;
+            blankSquares += blank * blank;
+            maxBlankPerDay = Math.max(maxBlankPerDay, blank);
+            if (shortage > 0 && blank > 0) {
+                missingBlankConflict += shortage * blank;
+            }
+
             targetStaff.forEach(staff => {
                 const cell = matrix[staff.id][d];
                 if (this.isRouteAssignmentSym(cell.symbol) && !this.canWorkRoute(staff, cell, cell.symbol)) {
@@ -260,7 +280,18 @@ export class Generator {
             overage,
             invalidAssignments,
             holidayViolations,
-            value: missing * 100000 + overage * 100000 + invalidAssignments * 100000 + holidayViolations * 1000
+            totalBlank,
+            blankSquares,
+            maxBlankPerDay,
+            missingBlankConflict,
+            value: missing * 1000000 +
+                overage * 1000000 +
+                invalidAssignments * 1000000 +
+                missingBlankConflict * 500000 +
+                holidayViolations * 10000 +
+                maxBlankPerDay * 5000 +
+                blankSquares * 50 +
+                totalBlank
         };
     }
 
@@ -1476,6 +1507,72 @@ export class Generator {
         }
     }
 
+    labelSurplusBlanks(matrix, allStaff, targetStaff, dailySlots, startDay, endDay, yearMonth) {
+        const targetMaxBlank = 2;
+        let changed = true;
+        let loops = 0;
+
+        while (changed && loops < 4 && !this.isGenerationTimeUp()) {
+            changed = false;
+            loops++;
+
+            const days = [];
+            for (let d = startDay; d <= endDay; d++) {
+                days.push({
+                    day: d,
+                    blanks: this.blankCount(matrix, targetStaff, d),
+                    shortage: this.dayRouteShortage(matrix, allStaff, dailySlots, d)
+                });
+            }
+
+            days
+                .filter(item => item.shortage === 0 && item.blanks > targetMaxBlank)
+                .sort((a, b) => b.blanks - a.blanks)
+                .forEach(item => {
+                    if (this.isGenerationTimeUp()) return;
+
+                    const candidates = [...targetStaff]
+                        .filter(staff => {
+                            const cell = matrix[staff.id][item.day];
+                            return !cell.locked && !cell.symbol;
+                        })
+                        .sort((a, b) => {
+                            const cellA = matrix[a.id][item.day];
+                            const cellB = matrix[b.id][item.day];
+                            const usableA = this.getUsableCapabilityCount(a, cellA, dailySlots[item.day] || []);
+                            const usableB = this.getUsableCapabilityCount(b, cellB, dailySlots[item.day] || []);
+                            if (usableA !== usableB) return usableA - usableB;
+                            return String(a.id).localeCompare(String(b.id));
+                        });
+
+                    for (const staff of candidates) {
+                        if (this.blankCount(matrix, targetStaff, item.day) <= targetMaxBlank) break;
+                        const cell = matrix[staff.id][item.day];
+                        const symbol = this.chooseInsertedRestSymbol(matrix, staff, cell, yearMonth, item.day, startDay, endDay);
+
+                        if (symbol === '非番' &&
+                            this.countHibanInWeek(matrix, staff.id, yearMonth, item.day, startDay, endDay) >= 2) {
+                            continue;
+                        }
+
+                        const backup = this.snapshotCells(matrix, [{ staffId: staff.id, day: item.day }]);
+                        cell.symbol = symbol;
+                        cell.type = 'OFF';
+                        cell.fixed = true;
+
+                        const valid = this.validateHolidayRules(matrix, staff.id, startDay, endDay) &&
+                            this.dayRouteShortage(matrix, allStaff, dailySlots, item.day) === 0;
+
+                        if (valid) {
+                            changed = true;
+                        } else {
+                            this.restoreCells(matrix, backup);
+                        }
+                    }
+                });
+        }
+    }
+
     getMissingRouteSlots(matrix, allStaff, dailySlots, startDay, endDay) {
         const missing = [];
         for (let d = startDay; d <= endDay; d++) {
@@ -1519,6 +1616,12 @@ export class Generator {
             const sym = matrix[staff.id][day].symbol;
             return count + (!sym || sym === '祝日' ? 1 : 0);
         }, 0);
+    }
+
+    blankCount(matrix, staffList, day) {
+        return staffList.reduce((count, staff) => (
+            !matrix[staff.id][day].symbol ? count + 1 : count
+        ), 0);
     }
 
     canMoveRestBetweenDays(restSymbol, fromDay, toDay, yearMonth) {
