@@ -386,6 +386,7 @@ export class EditorView {
 
   getSymbolColor(symbol) {
     if (!symbol) return 'transparent';
+    if (symbol === '祝日') return '#ffaaaa';
     const s = this.store.state.symbols.find(sym => sym.symbol === symbol);
     return s ? s.color : 'transparent';
   }

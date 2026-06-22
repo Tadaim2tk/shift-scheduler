@@ -132,6 +132,7 @@ export class Store {
         return [
             { symbol: '〇', canonical: 'Work', type: 'WORK', color: '#e0f2f1' },
             { symbol: '週休', canonical: 'OFF', type: 'OFF', color: '#ffaaaa' },
+            { symbol: '祝日', canonical: 'HOLIDAY', type: 'OFF', color: '#ffaaaa' },
             { symbol: '非番', canonical: 'OFF', type: 'OFF', color: '#ddd' },
             { symbol: '年休', canonical: 'PAID_LEAVE', type: 'OFF', color: '#ffcccc' },
             { symbol: '出張(研修)', canonical: 'TRAINING', type: 'WORK', color: '#ccffcc' },
@@ -245,7 +246,7 @@ export class Store {
         });
 
         // Filter unwanted
-        const allowed = new Set(['週休', '非番', '年休', '出張(研修)', '通区', '／', '希']);
+        const allowed = new Set(['週休', '祝日', '非番', '年休', '出張(研修)', '通区', '／', '希']);
         this.state.symbols = this.state.symbols.filter(s => allowed.has(s.symbol));
 
         // Deduplicate
@@ -356,6 +357,7 @@ export class Store {
         // Re-inject defaults if missing
         const defaults = [
             { symbol: '週休', canonical: 'OFF', type: 'OFF', color: '#ffaaaa' },
+            { symbol: '祝日', canonical: 'HOLIDAY', type: 'OFF', color: '#ffaaaa' },
             { symbol: '非番', canonical: 'OFF', type: 'OFF', color: '#ddd' },
             { symbol: '年休', canonical: 'PAID_LEAVE', type: 'OFF', color: '#ffcccc' },
             { symbol: '出張(研修)', canonical: 'TRAINING', type: 'WORK', color: '#ccffcc' },
