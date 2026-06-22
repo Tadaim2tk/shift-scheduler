@@ -532,26 +532,25 @@ export class EditorView {
 
       // Lower score = better schedule.  Coverage is most important, then hard
       // business violations, then rest-rule softness.
-      const qualityScore = (result) => {
+      // Hard operational rules first (must never be sacrificed for coverage):
+      // capability, no duplicates, rest-day counts, and consecutive-work limits.
+      // Missing routes (欠区) are intentionally the lowest priority because the
+      // user fills shortages manually.
+      const hardViolationScore = (result) => {
         const m = result?.metrics || {};
-        return (m.underfill || 0) * 1e7
-          + (m.illegalAssignments || 0) * 1e6
+        return (m.illegalAssignments || 0) * 1e6
           + (m.overfill || 0) * 1e5
           + (m.weeklyRestViolations || 0) * 1e3
           + (m.minOffViolations || 0) * 1e2
           + (m.consecutiveViolations || 0) * 10;
       };
 
-      // Issues the planner can realistically fix by editing locks / requirements.
-      // 4週8休 shortfalls for single-skill staff are structural and are reported
-      // as info, not treated as a generation failure.
-      const actionableScore = (result) => {
+      // Used only to pick the better of two candidate schedules: hard rules
+      // dominate, then fewer missing routes, then fewer disruptive changes.
+      const qualityScore = (result) => {
         const m = result?.metrics || {};
-        return (m.underfill || 0) * 1e7
-          + (m.illegalAssignments || 0) * 1e6
-          + (m.overfill || 0) * 1e5
-          + (m.weeklyRestViolations || 0) * 1e3
-          + (m.consecutiveViolations || 0) * 10;
+        return hardViolationScore(result) * 1e4
+          + (m.underfill || 0) * 10;
       };
 
       const resultCoversVisiblePeriod = (result, payload) => {
@@ -685,28 +684,42 @@ export class EditorView {
 
         const changed = best.result.changedCells?.length || 0;
         const usedRepair = best.mode === 'repair' && mode !== 'repair';
-        const minOff = best.result.metrics?.minOffViolations || 0;
-        if (actionableScore(best.result) === 0) {
-          // No fixable problems remain.  Report repair moves and any structural
-          // 4週8休 shortfall as information only.
+        const missing = best.result.metrics?.underfill || 0;
+        const blankCount = Object.values(best.result.matrix || {}).reduce((acc, row) => (
+          acc + Object.values(row).filter(cell => !cell.symbol || cell.symbol === '空き').length
+        ), 0);
+
+        if (hardViolationScore(best.result) === 0) {
+          // All absolute rules (休み数 / 連勤 / 能力 / 重複) are satisfied.
+          // Missing routes and idle (空き) are intentionally left for the
+          // planner to resolve manually (欠区・計画・有休). The solver never
+          // auto-assigns 年休 or fabricates 欠区 placeholders.
           const notes = [];
           if (usedRepair && changed > 0) {
             const sample = (best.result.changedCells || []).slice(0, 8).map(item => `${item.date} ${item.staffId}: ${item.from}→${item.to}`);
             const more = changed > sample.length ? `\nほか ${changed - sample.length} 件` : '';
-            notes.push(`空き枠固定では解けなかったため、自動リペアで既存配置を ${changed} 箇所だけ動かして解消しました。\n変更例:\n${sample.join('\n')}${more}`);
+            notes.push(`空き枠固定では解けなかったため、自動リペアで既存配置を ${changed} 箇所だけ動かしました。\n変更例:\n${sample.join('\n')}${more}`);
           }
-          if (minOff > 0) {
-            notes.push(`なお、担当・固定休の都合で4週8休に届かない社員が ${minOff} 件分あります（構造的な制約のため、担当範囲を増やすか休日要件を見直さない限り解消できません）。`);
+          if (missing > 0) {
+            notes.push(`人員不足のため未配置のままにした区が ${missing} 件あります。欠区/計画などの対応はこちらで手動で割り当ててください（自動では欠区にしていません）。\n\n${summarizeUnfilled(best.result)}`);
           }
-          if (notes.length) alert(`生成しました。\n${summarizeMetrics(best.result)}\n\n${notes.join('\n\n')}`);
+          if (blankCount > 0) {
+            notes.push(`空き（余剰）が ${blankCount} 人日あります。有休消化などで誰かを追加で休ませる場合は手動で割り当ててください（年休は自動付与していません）。`);
+          }
+          const head = (missing > 0 || blankCount > 0)
+            ? '生成しました（休み・連勤・能力・重複の違反は0です）。'
+            : '生成しました（欠員・空きなし、違反なし）。';
+          if (notes.length || missing > 0 || blankCount > 0) {
+            alert(`${head}\n${summarizeMetrics(best.result)}${notes.length ? '\n\n' + notes.join('\n\n') : ''}`);
+          }
         } else {
-          const unfilled = summarizeUnfilled(best.result);
+          // A hard rule could not be satisfied — almost always because of
+          // conflicting locked cells or fixed leave.
           const body = [
-            'ベストな結果を反映しました（完全には解消できない課題が残っています）。',
+            'ベストな結果を反映しましたが、絶対ルール（休み数・連勤・能力・重複）に違反が残っています。',
             summarizeMetrics(best.result),
+            '\nこれは通常、ロック（鍵マーク）や固定休が矛盾しているときに起きます。該当セルのロックを外して「自動リペア」を再実行してください。',
           ];
-          if (unfilled) body.push('\n欠員の内訳:\n' + unfilled);
-          body.push('\nロック（鍵マーク）や希望休が多いと、本来動かせる人を動かせず欠員や違反が残ります。該当セルのロックを外して「自動リペア」を再実行すると改善する場合があります。');
           alert(body.join('\n'));
         }
         window.location.reload();
