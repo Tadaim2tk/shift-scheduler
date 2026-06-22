@@ -356,6 +356,7 @@ export class Generator {
                 score.overage === 0 &&
                 score.invalidAssignments === 0 &&
                 score.holidayViolations === 0 &&
+                score.hibanViolations === 0 &&
                 score.maxBlankPerDay <= 2) {
                 break;
             }
@@ -406,6 +407,12 @@ export class Generator {
             this.finalFillMissingRoutes(matrix, allStaff, targetStaff, dailySlots, startDay, endDay, yearMonth);
         }
         if (!this.isGenerationTimeUp()) {
+            this.repairWeeklyHibanCoverage(matrix, allStaff, targetStaff, dailySlots, startDay, endDay, yearMonth);
+        }
+        if (!this.isGenerationTimeUp()) {
+            this.finalFillMissingRoutes(matrix, allStaff, targetStaff, dailySlots, startDay, endDay, yearMonth);
+        }
+        if (!this.isGenerationTimeUp()) {
             this.labelSurplusBlanks(matrix, allStaff, targetStaff, dailySlots, startDay, endDay, yearMonth);
         }
     }
@@ -415,6 +422,7 @@ export class Generator {
         const overage = this.totalRouteOverage(matrix, allStaff, dailySlots, startDay, endDay);
         let invalidAssignments = 0;
         let holidayViolations = 0;
+        let hibanViolations = 0;
         let totalBlank = 0;
         let blankSquares = 0;
         let maxBlankPerDay = 0;
@@ -440,6 +448,7 @@ export class Generator {
 
         targetStaff.forEach(staff => {
             if (!this.validateHolidayRules(matrix, staff.id, startDay, endDay)) holidayViolations++;
+            hibanViolations += this.countHibanCoverageViolations(matrix, staff.id, startDay, endDay);
         });
 
         return {
@@ -447,6 +456,7 @@ export class Generator {
             overage,
             invalidAssignments,
             holidayViolations,
+            hibanViolations,
             totalBlank,
             blankSquares,
             maxBlankPerDay,
@@ -455,6 +465,7 @@ export class Generator {
                 overage * 1000000 +
                 invalidAssignments * 1000000 +
                 missingBlankConflict * 500000 +
+                hibanViolations * 50000 +
                 holidayViolations * 10000 +
                 maxBlankPerDay * 5000 +
                 blankSquares * 50 +
@@ -1031,6 +1042,11 @@ export class Generator {
                     continue;
                 }
 
+                if (this.repairDayWithRouteRematch(matrix, allStaff, targetStaff, dailySlots, slot.day, startDay, endDay)) {
+                    changed = true;
+                    continue;
+                }
+
                 if (this.trySwapHoliday(matrix, targetStaff, slot.day, slot.routeId, startDay, endDay, yearMonth)) {
                     changed = true;
                     continue;
@@ -1145,6 +1161,117 @@ export class Generator {
             ...sorted.filter(option => option.mode === 'empty').slice(0, 5),
             ...sorted.filter(option => option.mode === 'route').slice(0, 3)
         ];
+    }
+
+    repairDayWithRouteRematch(matrix, allStaff, targetStaff, dailySlots, day, startDay, endDay) {
+        const slots = dailySlots[day] || [];
+        if (slots.length === 0 || this.isGenerationTimeUp()) return false;
+
+        const originalShortage = this.dayRouteShortage(matrix, allStaff, dailySlots, day);
+        if (originalShortage === 0) return false;
+
+        const movable = targetStaff.filter(staff => {
+            const cell = matrix[staff.id][day];
+            if (!cell || cell.locked) return false;
+            return !cell.symbol || cell.symbol === '祝日' || this.isRouteAssignmentSym(cell.symbol);
+        });
+
+        if (movable.length === 0) return false;
+
+        const movableIds = new Set(movable.map(staff => String(staff.id)));
+        const required = [];
+        slots.forEach(slot => {
+            let fixedAssigned = 0;
+            allStaff.forEach(staff => {
+                const cell = matrix[staff.id][day];
+                if (cell.symbol !== slot.id) return;
+                if (cell.locked || !movableIds.has(String(staff.id))) fixedAssigned++;
+            });
+
+            const remaining = Math.max(0, slot.count - fixedAssigned);
+            for (let i = 0; i < remaining; i++) {
+                required.push({ routeId: slot.id, key: `${slot.id}:${i}` });
+            }
+        });
+
+        if (required.length === 0) return false;
+
+        const candidateMap = new Map();
+        required.forEach(req => {
+            const candidates = movable
+                .filter(staff => {
+                    const cell = matrix[staff.id][day];
+                    if (!this.canWorkRoute(staff, cell, req.routeId)) return false;
+                    if (this.wouldBreakIntervals(matrix, staff.id, day, req.routeId)) return false;
+
+                    const backup = { symbol: cell.symbol, type: cell.type };
+                    cell.symbol = req.routeId;
+                    cell.type = 'ROUTE';
+                    const valid = this.respectsMaxConsecutiveWork(matrix, staff.id, startDay, endDay);
+                    cell.symbol = backup.symbol;
+                    cell.type = backup.type;
+                    return valid;
+                })
+                .sort(this.assignmentComparator(req.routeId, day, matrix, slots, targetStaff));
+            candidateMap.set(req.key, candidates);
+        });
+
+        const orderedRequired = [...required].sort((a, b) => {
+            const lenA = candidateMap.get(a.key)?.length || 0;
+            const lenB = candidateMap.get(b.key)?.length || 0;
+            if (lenA !== lenB) return lenA - lenB;
+            return this.getRouteDemandGroups(b.routeId).length - this.getRouteDemandGroups(a.routeId).length;
+        });
+
+        const matchedStaffByRouteKey = new Map();
+        const matchedRouteKeyByStaff = new Map();
+        const routeByKey = new Map(orderedRequired.map(req => [req.key, req.routeId]));
+
+        const tryAssign = (routeKey, seenStaff = new Set()) => {
+            const candidates = candidateMap.get(routeKey) || [];
+            for (const staff of candidates) {
+                const staffKey = String(staff.id);
+                if (seenStaff.has(staffKey)) continue;
+                seenStaff.add(staffKey);
+
+                const previousRouteKey = matchedRouteKeyByStaff.get(staffKey);
+                if (!previousRouteKey || tryAssign(previousRouteKey, seenStaff)) {
+                    matchedStaffByRouteKey.set(routeKey, staff);
+                    matchedRouteKeyByStaff.set(staffKey, routeKey);
+                    return true;
+                }
+            }
+            return false;
+        };
+
+        orderedRequired.forEach(req => tryAssign(req.key));
+
+        if (matchedStaffByRouteKey.size === 0) return false;
+
+        const refs = movable.map(staff => ({ staffId: staff.id, day }));
+        const backup = this.snapshotCells(matrix, refs);
+
+        movable.forEach(staff => this.clearCell(matrix[staff.id][day]));
+        matchedStaffByRouteKey.forEach((staff, routeKey) => {
+            const cell = matrix[staff.id][day];
+            cell.symbol = routeByKey.get(routeKey);
+            cell.type = 'ROUTE';
+            cell.fixed = false;
+        });
+
+        const changedStaffIds = new Set(movable.map(staff => String(staff.id)));
+        const valid = [...changedStaffIds].every(staffId => (
+            this.respectsMaxConsecutiveWork(matrix, staffId, startDay, endDay)
+        ));
+        const newShortage = this.dayRouteShortage(matrix, allStaff, dailySlots, day);
+        const newOverage = this.totalRouteOverage(matrix, allStaff, dailySlots, day, day);
+
+        if (valid && newShortage < originalShortage && newOverage === 0) {
+            return true;
+        }
+
+        this.restoreCells(matrix, backup);
+        return false;
     }
 
     trySwapRoute(
@@ -1518,6 +1645,8 @@ export class Generator {
                         changed = true;
                     } else if (yearMonth && this.trySwapRoute(matrix, targetStaff, d, routeId, startDay, endDay, yearMonth, dailySlots)) {
                         changed = true;
+                    } else if (this.repairDayWithRouteRematch(matrix, allStaff, targetStaff, dailySlots, d, startDay, endDay)) {
+                        changed = true;
                     }
                 });
             }
@@ -1555,6 +1684,164 @@ export class Generator {
         const [y, m] = yearMonth.split('-').map(Number);
         const date = new Date(y, m - 1, day);
         return day - date.getDay();
+    }
+
+    getCalendarWeekRanges(startDay, endDay, sampleCell) {
+        if (!sampleCell?.dateStr) return [];
+        const [y, m] = sampleCell.dateStr.split('-').map(Number);
+        const weeks = [];
+        let cursor = startDay;
+        while (cursor <= endDay) {
+            const date = new Date(y, m - 1, cursor);
+            const weekStart = cursor - date.getDay();
+            const weekEnd = weekStart + 6;
+            const visibleStart = Math.max(startDay, weekStart);
+            const visibleEnd = Math.min(endDay, weekEnd);
+            weeks.push({ weekStart, weekEnd, visibleStart, visibleEnd });
+            cursor = visibleEnd + 1;
+        }
+        return weeks;
+    }
+
+    countHibanCoverageViolations(matrix, staffId, startDay, endDay) {
+        const staff = this.store.state.staff.find(s => String(s.id) === String(staffId));
+        if (!this.requiresWeeklyHiban(staff)) return 0;
+
+        const weeks = this.getCalendarWeekRanges(startDay, endDay, matrix[staffId]?.[startDay]);
+        let violations = 0;
+
+        weeks.forEach(week => {
+            const visibleDays = week.visibleEnd - week.visibleStart + 1;
+            if (visibleDays < 4) return;
+
+            let exactWeekHiban = 0;
+            for (let d = week.visibleStart; d <= week.visibleEnd; d++) {
+                if (matrix[staffId]?.[d]?.symbol === '非番') exactWeekHiban++;
+            }
+            if (exactWeekHiban >= 3) violations++;
+
+            let hasHibanNearWeek = false;
+            const nearStart = Math.max(startDay, week.weekStart - 3);
+            const nearEnd = Math.min(endDay, week.weekEnd + 3);
+            for (let d = nearStart; d <= nearEnd; d++) {
+                if (matrix[staffId]?.[d]?.symbol === '非番') {
+                    hasHibanNearWeek = true;
+                    break;
+                }
+            }
+            if (!hasHibanNearWeek) violations++;
+        });
+
+        return violations;
+    }
+
+    requiresWeeklyHiban(staff) {
+        if (!staff) return false;
+        const allCaps = [
+            ...(staff.capabilities || []),
+            ...(staff.satCapabilities || []),
+            ...(staff.sunCapabilities || [])
+        ];
+        return allCaps.some(routeId => {
+            const groups = this.getRouteDemandGroups(routeId);
+            return groups.includes('team1') || groups.includes('team2') || groups.includes('shared-special');
+        });
+    }
+
+    repairWeeklyHibanCoverage(matrix, allStaff, targetStaff, dailySlots, startDay, endDay, yearMonth) {
+        let changed = true;
+        let loops = 0;
+
+        while (changed && loops < 4 && !this.isGenerationTimeUp()) {
+            changed = false;
+            loops++;
+
+            for (const staff of targetStaff) {
+                if (this.isGenerationTimeUp()) break;
+                if (!this.requiresWeeklyHiban(staff)) continue;
+                const weeks = this.getCalendarWeekRanges(startDay, endDay, matrix[staff.id]?.[startDay]);
+
+                for (const week of weeks) {
+                    const visibleDays = week.visibleEnd - week.visibleStart + 1;
+                    if (visibleDays < 4) continue;
+
+                    const nearStart = Math.max(startDay, week.weekStart - 3);
+                    const nearEnd = Math.min(endDay, week.weekEnd + 3);
+                    let hasHibanNearWeek = false;
+                    for (let d = nearStart; d <= nearEnd; d++) {
+                        if (matrix[staff.id]?.[d]?.symbol === '非番') {
+                            hasHibanNearWeek = true;
+                            break;
+                        }
+                    }
+                    if (hasHibanNearWeek) continue;
+
+                    const candidates = [];
+                    for (let d = nearStart; d <= nearEnd; d++) {
+                        const cell = matrix[staff.id][d];
+                        if (cell.locked || cell.isHol || cell.symbol === '週休' || cell.symbol === '非番') continue;
+                        if (this.countHibanInWeek(matrix, staff.id, yearMonth, d, startDay, endDay) >= 2) continue;
+
+                        const currentSym = cell.symbol;
+                        let score = cell.isSunOrHol ? 60 : cell.isSat ? 45 : 0;
+                        if (!currentSym) {
+                            score += 200;
+                        } else if (this.isRouteAssignmentSym(currentSym)) {
+                            const capable = targetStaff.filter(s => this.canWorkRoute(s, matrix[s.id][d], currentSym)).length;
+                            score += capable * 10;
+                            if (this.countRoute(matrix, allStaff, d, currentSym) > (dailySlots[d]?.find(req => req.id === currentSym)?.count || 0)) {
+                                score += 80;
+                            }
+                        } else {
+                            continue;
+                        }
+
+                        candidates.push({ day: d, score });
+                    }
+
+                    candidates.sort((a, b) => b.score - a.score || Math.abs(a.day - week.visibleStart) - Math.abs(b.day - week.visibleStart));
+
+                    for (const candidate of candidates) {
+                        const cell = matrix[staff.id][candidate.day];
+                        const previousSymbol = cell.symbol;
+                        const previousViolations = this.countHibanCoverageViolations(matrix, staff.id, startDay, endDay);
+                        const previousShortage = this.totalRouteShortage(matrix, allStaff, dailySlots, startDay, endDay);
+                        const backup = this.snapshotRange(matrix, allStaff, startDay, endDay);
+                        cell.symbol = '非番';
+                        cell.type = 'OFF';
+                        cell.fixed = true;
+
+                        if (this.isRouteAssignmentSym(previousSymbol) &&
+                            this.dayRouteShortage(matrix, allStaff, dailySlots, candidate.day) > 0) {
+                            this.trySwapRoute(
+                                matrix,
+                                targetStaff,
+                                candidate.day,
+                                previousSymbol,
+                                startDay,
+                                endDay,
+                                yearMonth,
+                                dailySlots,
+                                0,
+                                new Set([String(staff.id)])
+                            );
+                            this.repairDayWithRouteRematch(matrix, allStaff, targetStaff, dailySlots, candidate.day, startDay, endDay);
+                        }
+
+                        const valid = this.respectsMaxConsecutiveWork(matrix, staff.id, startDay, endDay) &&
+                            this.countHibanCoverageViolations(matrix, staff.id, startDay, endDay) < previousViolations &&
+                            this.totalRouteShortage(matrix, allStaff, dailySlots, startDay, endDay) <= previousShortage;
+
+                        if (valid) {
+                            changed = true;
+                            break;
+                        }
+
+                        this.restoreCells(matrix, backup);
+                    }
+                }
+            }
+        }
     }
 
     hasShukyuInWeek(matrix, staffId, yearMonth, day, startDay, endDay) {
