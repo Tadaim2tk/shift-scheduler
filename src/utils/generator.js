@@ -81,6 +81,163 @@ export class Generator {
         return dailySlots.filter(slot => this.canWorkRoute(staff, cell, slot.id)).length;
     }
 
+    getRouteDemandGroups(routeId) {
+        const groups = [];
+        const add = group => {
+            if (group && !groups.includes(group)) groups.push(group);
+        };
+
+        if (/^[1-6]区$/.test(routeId)) {
+            add('team1');
+            add('team1-route');
+        } else if (['混早1', '混遅1', '混中1', '1班予備'].includes(routeId)) {
+            add('team1');
+            add('team1-mixed');
+        } else if (/^(7|8|9|10)区$/.test(routeId)) {
+            add('team2');
+            add('team2-local');
+        } else if (/^(11|12|13)区$/.test(routeId) || ['弥彦早', '弥彦遅', '弥彦予備'].includes(routeId)) {
+            add('team2');
+            add('team2-yahiko');
+        } else if (['混早2', '混遅2', '混中2', '2班予備'].includes(routeId)) {
+            add('team2');
+            add('team2-mixed');
+        } else if (['特早', '特遅'].includes(routeId)) {
+            add('shared-special');
+        } else if (['計画', '夕方区分', '夕差立'].includes(routeId)) {
+            add('internal');
+        }
+
+        return groups;
+    }
+
+    getPrimaryRouteGroup(routeId) {
+        const groups = this.getRouteDemandGroups(routeId);
+        if (groups.includes('team1')) return 'team1';
+        if (groups.includes('team2')) return 'team2';
+        if (groups.includes('shared-special')) return 'shared-special';
+        if (groups.includes('internal')) return 'internal';
+        return null;
+    }
+
+    getStaffHomeGroup(staff) {
+        const group = staff.attributes?.group;
+        if (group === '一斑') return 'team1';
+        if (group === '二班') return 'team2';
+        if (group === '内務班') return 'internal';
+        return null;
+    }
+
+    getStaffUsableDemandGroups(staff, cell, dailySlots = []) {
+        const groups = new Set();
+        dailySlots.forEach(slot => {
+            if (!this.canWorkRoute(staff, cell, slot.id)) return;
+            this.getRouteDemandGroups(slot.id).forEach(group => groups.add(group));
+        });
+        return groups;
+    }
+
+    getDayDemandStats(matrix, staffList, dailySlots = [], day) {
+        const stats = {};
+        const ensure = group => {
+            if (!stats[group]) stats[group] = { required: 0, filled: 0, shortage: 0, free: 0 };
+            return stats[group];
+        };
+
+        dailySlots.forEach(slot => {
+            const filled = this.countRoute(matrix, staffList, day, slot.id);
+            const shortage = Math.max(0, slot.count - filled);
+            this.getRouteDemandGroups(slot.id).forEach(group => {
+                const item = ensure(group);
+                item.required += slot.count;
+                item.filled += Math.min(filled, slot.count);
+                item.shortage += shortage;
+            });
+        });
+
+        staffList.forEach(staff => {
+            const cell = matrix[staff.id][day];
+            if (!cell || cell.locked) return;
+            if (cell.symbol && cell.symbol !== '祝日') return;
+            this.getStaffUsableDemandGroups(staff, cell, dailySlots).forEach(group => {
+                ensure(group).free++;
+            });
+        });
+
+        return stats;
+    }
+
+    getDemandGroupPressure(stats, group) {
+        const item = stats[group] || { required: 0, shortage: 0, free: 0 };
+        if (item.required === 0 && item.shortage === 0) return 0;
+        const slack = item.free - item.shortage;
+        return item.shortage * 120 + Math.max(0, 2 - slack) * 25 + item.required;
+    }
+
+    getAssignmentOpportunityCost(staff, routeId, day, matrix, dailySlots = [], staffList = null, dayStats = null) {
+        const cell = matrix[staff.id][day];
+        const targetGroups = new Set(this.getRouteDemandGroups(routeId));
+        const usableGroups = this.getStaffUsableDemandGroups(staff, cell, dailySlots);
+        const stats = dayStats || this.getDayDemandStats(matrix, staffList || this.store.state.staff || [], dailySlots, day);
+        const targetPrimary = this.getPrimaryRouteGroup(routeId);
+        const homeGroup = this.getStaffHomeGroup(staff);
+        let cost = 0;
+
+        usableGroups.forEach(group => {
+            if (targetGroups.has(group)) return;
+            cost += this.getDemandGroupPressure(stats, group);
+        });
+
+        if (targetPrimary && targetPrimary !== 'shared-special' && targetPrimary !== 'internal' &&
+            homeGroup && homeGroup !== targetPrimary && usableGroups.has(homeGroup)) {
+            const homePressure = this.getDemandGroupPressure(stats, homeGroup);
+            const targetPressure = this.getDemandGroupPressure(stats, targetPrimary);
+            cost += 20 + Math.max(0, homePressure - targetPressure);
+        }
+
+        return cost;
+    }
+
+    compareAssignmentCandidate(a, b, routeId, day, matrix, dailySlots = [], staffList = null, dayStats = null) {
+        const costA = this.getAssignmentOpportunityCost(a, routeId, day, matrix, dailySlots, staffList, dayStats);
+        const costB = this.getAssignmentOpportunityCost(b, routeId, day, matrix, dailySlots, staffList, dayStats);
+        if (costA !== costB) return costA - costB;
+        return this.compareSpecialistFirst(a, b, day, matrix, dailySlots);
+    }
+
+    assignmentComparator(routeId, day, matrix, dailySlots = [], staffList = null, reverse = false) {
+        const scopedStaff = staffList || this.store.state.staff || [];
+        const dayStats = this.getDayDemandStats(matrix, scopedStaff, dailySlots, day);
+        return (a, b) => {
+            const result = this.compareAssignmentCandidate(a, b, routeId, day, matrix, dailySlots, scopedStaff, dayStats);
+            return reverse ? -result : result;
+        };
+    }
+
+    sortMissingSlots(missing, matrix, staffList, dailySlots) {
+        return missing.sort((a, b) => {
+            const daySlotsA = dailySlots[a.day] || [];
+            const daySlotsB = dailySlots[b.day] || [];
+            const capableA = staffList.filter(s => this.canWorkRoute(s, matrix[s.id][a.day], a.routeId)).length;
+            const capableB = staffList.filter(s => this.canWorkRoute(s, matrix[s.id][b.day], b.routeId)).length;
+            if (capableA !== capableB) return capableA - capableB;
+
+            const statsA = this.getDayDemandStats(matrix, staffList, daySlotsA, a.day);
+            const statsB = this.getDayDemandStats(matrix, staffList, daySlotsB, b.day);
+            const pressureA = this.getRouteDemandGroups(a.routeId)
+                .reduce((sum, group) => sum + this.getDemandGroupPressure(statsA, group), 0);
+            const pressureB = this.getRouteDemandGroups(b.routeId)
+                .reduce((sum, group) => sum + this.getDemandGroupPressure(statsB, group), 0);
+            if (pressureA !== pressureB) return pressureB - pressureA;
+
+            const emptyA = this.emptyCount(matrix, staffList, a.day);
+            const emptyB = this.emptyCount(matrix, staffList, b.day);
+            if (emptyA !== emptyB) return emptyB - emptyA;
+
+            return a.day - b.day;
+        });
+    }
+
     compareSpecialistFirst(a, b, day, matrix, dailySlots = []) {
         const cellA = matrix[a.id][day];
         const cellB = matrix[b.id][day];
@@ -429,7 +586,7 @@ export class Generator {
                         const totalToday = this.getCapabilities(s, cell.isSat, cell.isSunOrHol).length;
                         return usableToday === 1 || totalToday === 1;
                     })
-                    .sort((a, b) => this.compareSpecialistFirst(a, b, d, matrix, dailySlots[d]));
+                    .sort(this.assignmentComparator(req.id, d, matrix, dailySlots[d], targetStaff));
 
                 for (const s of specialists) {
                     if (filled >= req.count) break;
@@ -749,33 +906,7 @@ export class Generator {
         }
 
         // --- SORT BY LEAST REMAINING CHOICES (LRV) AND WEEKEND PRIORITY ---
-        missing.sort((a, b) => {
-            // Count how many staff CAN fill 'a' vs 'b'
-            let capableA = 0;
-            let capableB = 0;
-            allStaff.forEach(s => {
-                const cA = matrix[s.id][a.day];
-                if (!cA.symbol || cA.symbol === '祝日') {
-                    if (this.canWorkRoute(s, cA, a.routeId)) capableA++;
-                }
-                const cB = matrix[s.id][b.day];
-                if (!cB.symbol || cB.symbol === '祝日') {
-                    if (this.canWorkRoute(s, cB, b.routeId)) capableB++;
-                }
-            });
-
-            // If a route has fewer capable staff, it is HARDER to fill, so prioritize it (sort lower)
-            if (capableA !== capableB) {
-                return capableA - capableB; 
-            }
-
-            // Fallback: weekend priority
-            const cellA = matrix[targetStaff[0]?.id]?.[a.day];
-            const cellB = matrix[targetStaff[0]?.id]?.[b.day];
-            const sumA = cellA?.isSunOrHol ? 20 : cellA?.isSat ? 10 : 0;
-            const sumB = cellB?.isSunOrHol ? 20 : cellB?.isSat ? 10 : 0;
-            return sumB - sumA;
-        });
+        this.sortMissingSlots(missing, matrix, allStaff, dailySlots);
 
         // --- PRE-BALANCE: Move Holidays from Deficit Days to Surplus Days ---
         let preBalanceChanged = true;
@@ -854,7 +985,7 @@ export class Generator {
                     continue;
                 }
                 const directCandidate = [...targetStaff]
-                    .sort((a, b) => this.compareSpecialistFirst(a, b, slot.day, matrix, dailySlots[slot.day] || []))
+                    .sort(this.assignmentComparator(slot.routeId, slot.day, matrix, dailySlots[slot.day] || [], targetStaff))
                     .find(s => {
                         const c = matrix[s.id][slot.day];
                         if (c.symbol && c.symbol !== '祝日') return false;
@@ -1026,9 +1157,8 @@ export class Generator {
 
             if (path.length > 10) continue;
 
-            const candidates = [...targetStaff].sort((a, b) => {
-                return this.compareSpecialistFirst(a, b, targetDay, matrix, dailySlots[targetDay] || []);
-            });
+            const candidates = [...targetStaff]
+                .sort(this.assignmentComparator(routeToFill, targetDay, matrix, dailySlots[targetDay] || [], targetStaff));
 
             for (const s of candidates) {
                 if (excludedStaffIds.has(String(s.id))) continue;
@@ -1261,7 +1391,7 @@ export class Generator {
                 if (assigned.length > req.count) {
                     const unlocked = assigned
                         .filter(s => !matrix[s.id][d].locked)
-                        .sort((a, b) => this.compareSpecialistFirst(b, a, d, matrix, dailySlots[d] || []));
+                        .sort(this.assignmentComparator(req.id, d, matrix, dailySlots[d] || [], targetStaff, true));
                     const overage = assigned.length - req.count;
 
                     for (let i = 0; i < overage && i < unlocked.length; i++) {
@@ -1301,7 +1431,7 @@ export class Generator {
                     c.symbol = backupSym;
                     c.type = backupType;
                     return valid;
-                }).sort((a, b) => this.compareSpecialistFirst(a, b, d, matrix, dailySlots[d] || []));
+                }).sort(this.assignmentComparator(missingRoute, d, matrix, dailySlots[d] || [], targetStaff));
 
                 if (holidayStaff.length > 0) {
                     const s = holidayStaff[0];
@@ -1337,7 +1467,7 @@ export class Generator {
                     }
 
                     const candidate = [...targetStaff]
-                        .sort((a, b) => this.compareSpecialistFirst(a, b, d, matrix, dailySlots[d] || []))
+                        .sort(this.assignmentComparator(routeId, d, matrix, dailySlots[d] || [], targetStaff))
                         .find(s => {
                             const c = matrix[s.id][d];
                             if (c.locked) return false;
@@ -1376,18 +1506,12 @@ export class Generator {
             changed = false;
             loops++;
 
-            const missing = this.getMissingRouteSlots(matrix, allStaff, dailySlots, startDay, endDay)
-                .sort((a, b) => {
-                    const capableA = targetStaff.filter(s => this.canWorkRoute(s, matrix[s.id][a.day], a.routeId)).length;
-                    const capableB = targetStaff.filter(s => this.canWorkRoute(s, matrix[s.id][b.day], b.routeId)).length;
-                    if (capableA !== capableB) return capableA - capableB;
-
-                    const emptyA = this.emptyCount(matrix, allStaff, a.day);
-                    const emptyB = this.emptyCount(matrix, allStaff, b.day);
-                    if (emptyA !== emptyB) return emptyB - emptyA;
-
-                    return a.day - b.day;
-                });
+            const missing = this.sortMissingSlots(
+                this.getMissingRouteSlots(matrix, allStaff, dailySlots, startDay, endDay),
+                matrix,
+                targetStaff,
+                dailySlots
+            );
 
             for (const slot of missing) {
                 if (this.isGenerationTimeUp()) break;
@@ -1649,12 +1773,12 @@ export class Generator {
             changed = false;
             loops++;
 
-            const missing = this.getMissingRouteSlots(matrix, allStaff, dailySlots, startDay, endDay)
-                .sort((a, b) => {
-                    const capableA = targetStaff.filter(s => this.canWorkRoute(s, matrix[s.id][a.day], a.routeId)).length;
-                    const capableB = targetStaff.filter(s => this.canWorkRoute(s, matrix[s.id][b.day], b.routeId)).length;
-                    return capableA - capableB;
-                });
+            const missing = this.sortMissingSlots(
+                this.getMissingRouteSlots(matrix, allStaff, dailySlots, startDay, endDay),
+                matrix,
+                targetStaff,
+                dailySlots
+            );
 
             for (const slot of missing) {
                 if (this.countRoute(matrix, allStaff, slot.day, slot.routeId) >= (dailySlots[slot.day].find(req => req.id === slot.routeId)?.count || 0)) {
@@ -1670,7 +1794,7 @@ export class Generator {
                         if (this.wouldBreakIntervals(matrix, s.id, slot.day, slot.routeId)) return false;
                         return true;
                     })
-                    .sort((a, b) => this.compareSpecialistFirst(a, b, slot.day, matrix, dailySlots[slot.day] || []));
+                    .sort(this.assignmentComparator(slot.routeId, slot.day, matrix, dailySlots[slot.day] || [], targetStaff));
 
                 for (const staff of restCandidates) {
                     const sourceCell = matrix[staff.id][slot.day];
