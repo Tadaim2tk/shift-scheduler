@@ -540,6 +540,7 @@ export class EditorView {
             attempts: 10
           });
         });
+        this.normalizeVisibleWeeklyHiban();
       };
 
       const resultCoversVisiblePeriod = (result, payload) => {
@@ -549,6 +550,18 @@ export class EditorView {
           const row = result.matrix[String(staff.id)];
           return row && expectedIndexes.every(dayIndex => row[dayIndex]);
         });
+      };
+
+      const validateSolverResult = (result, payload) => {
+        const issues = this.getSolverResultIssues(result, payload);
+        if (issues.total > 0) {
+          const parts = [];
+          if (issues.missing > 0) parts.push(`missing ${issues.missing}`);
+          if (issues.invalid > 0) parts.push(`invalid ${issues.invalid}`);
+          if (issues.streak > 0) parts.push(`streak ${issues.streak}`);
+          if (issues.hiban > 0) parts.push(`hiban ${issues.hiban}`);
+          throw new Error(`Solver returned a locally invalid schedule: ${parts.join(', ')}`);
+        }
       };
 
       try {
@@ -569,6 +582,7 @@ export class EditorView {
             if (result.unfilledRequirements?.length) {
                 throw new Error('Solver returned a schedule with unfilled requirements.');
             }
+            validateSolverResult(result, payload);
             Object.keys(result.matrix).forEach(s_id => {
                 const daysMap = result.matrix[s_id];
                 Object.keys(daysMap).forEach(idx_str => {
@@ -890,6 +904,287 @@ export class EditorView {
     // checkDuplicates needs to be smart.
     this.checkDuplicates();
     this.updateFooter();
+  }
+
+  getSolverResultIssues(result, payload) {
+    const dateIndexes = Object.keys(payload.dateLabels || {}).sort((a, b) => Number(a) - Number(b));
+    const issues = { missing: 0, invalid: 0, streak: 0, hiban: 0 };
+    const staffById = new Map(this.store.state.staff.map(staff => [String(staff.id), staff]));
+
+    dateIndexes.forEach(dayIndex => {
+      const label = payload.dateLabels[dayIndex];
+      const dateStr = label.originalDate;
+      const [, , dStr] = dateStr.split('-');
+      const ym = dateStr.slice(0, 7);
+      const day = Number(dStr);
+
+      this.store.state.routes.forEach(route => {
+        const required = this.getRequiredCountForRoute(route.id, dateStr, ym, day);
+        if (required <= 0) return;
+
+        let assigned = 0;
+        Object.keys(result.matrix || {}).forEach(staffId => {
+          const symbol = result.matrix[staffId]?.[dayIndex]?.symbol;
+          if (this.solverSymbolCountsForRoute(symbol, route.id)) assigned++;
+        });
+        if (assigned < required) issues.missing += required - assigned;
+      });
+
+      Object.keys(result.matrix || {}).forEach(staffId => {
+        const staff = staffById.get(String(staffId));
+        const symbol = result.matrix[staffId]?.[dayIndex]?.symbol;
+        if (!staff || !this.isSolverRouteSymbol(symbol)) return;
+        if (!this.solverStaffCanWork(staff, symbol, label)) issues.invalid++;
+      });
+    });
+
+    this.store.state.staff.forEach(staff => {
+      const row = result.matrix?.[String(staff.id)];
+      if (!row) return;
+      if (this.countSolverMaxStreakViolations(staff, row, dateIndexes) > 0) issues.streak++;
+      issues.hiban += this.countSolverHibanViolations(staff, row, dateIndexes, payload.dateLabels || {});
+    });
+
+    issues.total = issues.missing + issues.invalid + issues.streak + issues.hiban;
+    return issues;
+  }
+
+  solverSymbolCountsForRoute(symbol, routeId) {
+    if (symbol === routeId) return true;
+    if (routeId === '夕方区分' && symbol === '夕方') return true;
+    if (routeId === '1班予備' && symbol === '1予備') return true;
+    if (routeId === '混遅1' && symbol === '混中1') return true;
+    if (routeId === '混遅2' && symbol === '混中2') return true;
+    return false;
+  }
+
+  isSolverOffSymbol(symbol) {
+    return !symbol || ['空き', '週休', '非番', '年休', '祝日', '希', '欠', '／', '/'].includes(symbol);
+  }
+
+  isSolverRouteSymbol(symbol) {
+    return !!symbol && !this.isSolverOffSymbol(symbol);
+  }
+
+  solverStaffCanWork(staff, routeId, label) {
+    let caps;
+    if (label.isSat) {
+      caps = staff.satCapabilities || staff.weekendCapabilities || staff.capabilities || [];
+    } else if (label.isSun || label.isHol) {
+      caps = staff.sunCapabilities || staff.weekendCapabilities || staff.capabilities || [];
+    } else {
+      caps = staff.capabilities || [];
+    }
+    return caps.includes(routeId);
+  }
+
+  countSolverMaxStreakViolations(staff, row, dateIndexes) {
+    const maxConsecutive = this.store.getMaxConsecutiveWork
+      ? this.store.getMaxConsecutiveWork(staff)
+      : (this.store.state.settings?.maxConsecutiveWork ?? 5);
+    let streak = 0;
+    let violations = 0;
+    dateIndexes.forEach(dayIndex => {
+      const symbol = row?.[dayIndex]?.symbol;
+      if (this.isSolverRouteSymbol(symbol)) {
+        streak++;
+        if (streak > maxConsecutive) violations++;
+      } else {
+        streak = 0;
+      }
+    });
+    return violations;
+  }
+
+  solverRequiresWeeklyHiban(staff) {
+    const allCaps = [
+      ...(staff.capabilities || []),
+      ...(staff.satCapabilities || []),
+      ...(staff.sunCapabilities || [])
+    ];
+    return allCaps.some(routeId => (
+      /^[1-9]区$/.test(routeId) ||
+      /^1[0-3]区$/.test(routeId) ||
+      routeId.startsWith('混') ||
+      routeId.startsWith('弥彦') ||
+      routeId.startsWith('特') ||
+      routeId.includes('予備')
+    ));
+  }
+
+  countSolverHibanViolations(staff, row, dateIndexes, labels) {
+    if (!this.solverRequiresWeeklyHiban(staff)) return 0;
+    const dates = dateIndexes.map(dayIndex => {
+      const [year, month, day] = labels[dayIndex].originalDate.split('-').map(Number);
+      return {
+        dayIndex,
+        date: new Date(year, month - 1, day)
+      };
+    });
+    let violations = 0;
+    let cursor = 0;
+
+    while (cursor < dates.length) {
+      const base = dates[cursor].date;
+      const weekStart = new Date(base);
+      weekStart.setDate(base.getDate() - base.getDay());
+      const weekEnd = new Date(weekStart);
+      weekEnd.setDate(weekStart.getDate() + 6);
+
+      const weekDates = dates.filter(item => item.date >= weekStart && item.date <= weekEnd);
+      if (weekDates.length >= 4) {
+        const hibanInWeek = weekDates.filter(item => row?.[item.dayIndex]?.symbol === '非番').length;
+        if (hibanInWeek >= 3) violations++;
+
+        const nearStart = new Date(weekStart);
+        nearStart.setDate(weekStart.getDate() - 3);
+        const nearEnd = new Date(weekEnd);
+        nearEnd.setDate(weekEnd.getDate() + 3);
+        const hasNearHiban = dates.some(item => (
+          item.date >= nearStart &&
+          item.date <= nearEnd &&
+          row?.[item.dayIndex]?.symbol === '非番'
+        ));
+        if (!hasNearHiban) violations++;
+      }
+
+      cursor += weekDates.length || 1;
+    }
+
+    return violations;
+  }
+
+  normalizeVisibleWeeklyHiban() {
+    const columns = this.getVisibleColumnsForValidation();
+    if (columns.length === 0) return;
+
+    const dateIndexes = columns.map(col => String(col.index));
+    const labels = Object.fromEntries(columns.map(col => [String(col.index), {
+      originalDate: col.dateStr,
+      isSat: col.isSat,
+      isSun: col.isSun,
+      isHol: col.isHol
+    }]));
+    const rows = this.buildVisibleScheduleRows(columns);
+    const weeks = this.getVisibleWeekGroups(columns);
+    const scheduleUpdates = {};
+    let changed = false;
+
+    const getMonthSchedule = ym => {
+      if (!scheduleUpdates[ym]) {
+        scheduleUpdates[ym] = JSON.parse(JSON.stringify(this.store.getSchedule(ym) || {}));
+      }
+      return scheduleUpdates[ym];
+    };
+
+    this.store.state.staff.forEach(staff => {
+      if (!this.solverRequiresWeeklyHiban(staff)) return;
+      const staffId = String(staff.id);
+      const row = rows[staffId];
+      if (!row) return;
+
+      weeks.forEach(weekColumns => {
+        if (weekColumns.length < 4) return;
+
+        let hibanColumns = weekColumns.filter(col => row[String(col.index)]?.symbol === '非番');
+        while (hibanColumns.length >= 3) {
+          const before = this.countSolverHibanViolations(staff, row, dateIndexes, labels);
+          const candidate = hibanColumns
+            .filter(col => {
+              const cell = this.store.getSchedule(col.ym)?.[staffId]?.[col.dayKey];
+              return !cell?.locked;
+            })
+            .sort((a, b) => {
+              const weekendA = (a.isSat || a.isSun || a.isHol) ? 1 : 0;
+              const weekendB = (b.isSat || b.isSun || b.isHol) ? 1 : 0;
+              if (weekendA !== weekendB) return weekendA - weekendB;
+              return Math.abs(a.dayOfWeek - 3) - Math.abs(b.dayOfWeek - 3);
+            })
+            .find(col => {
+              const key = String(col.index);
+              const original = row[key];
+              row[key] = { ...original, symbol: '空き' };
+              const after = this.countSolverHibanViolations(staff, row, dateIndexes, labels);
+              row[key] = original;
+              return after < before;
+            });
+
+          if (!candidate) break;
+
+          const monthSchedule = getMonthSchedule(candidate.ym);
+          if (monthSchedule[staffId]) {
+            delete monthSchedule[staffId][candidate.dayKey];
+          }
+          row[String(candidate.index)] = { symbol: '空き', locked: false };
+          changed = true;
+          hibanColumns = weekColumns.filter(col => row[String(col.index)]?.symbol === '非番');
+        }
+      });
+    });
+
+    if (changed) {
+      Object.entries(scheduleUpdates).forEach(([ym, schedule]) => {
+        this.store.updateSchedule(ym, schedule);
+      });
+    }
+  }
+
+  getVisibleColumnsForValidation() {
+    const [sy, sm, sd] = (this.currentStartDate || Utils.getCurrentStartDate()).split('-').map(Number);
+    const startDate = new Date(sy, sm - 1, sd);
+    const columns = [];
+
+    for (let i = 0; i < this.periodDays; i++) {
+      const date = new Date(startDate);
+      date.setDate(startDate.getDate() + i);
+      const year = date.getFullYear();
+      const month = date.getMonth() + 1;
+      const day = date.getDate();
+      const ym = `${year}-${String(month).padStart(2, '0')}`;
+      const dateStr = `${ym}-${String(day).padStart(2, '0')}`;
+      columns.push({
+        index: i + 1,
+        ym,
+        day,
+        dayKey: String(day).padStart(2, '0'),
+        dateStr,
+        dayOfWeek: date.getDay(),
+        isSat: JapaneseCalendar.isSaturday(dateStr),
+        isSun: JapaneseCalendar.isSunday(dateStr),
+        isHol: JapaneseCalendar.isHoliday(dateStr)
+      });
+    }
+
+    return columns;
+  }
+
+  buildVisibleScheduleRows(columns) {
+    const rows = {};
+    this.store.state.staff.forEach(staff => {
+      const staffId = String(staff.id);
+      rows[staffId] = {};
+      columns.forEach(col => {
+        const cell = this.store.getSchedule(col.ym)?.[staffId]?.[col.dayKey];
+        rows[staffId][String(col.index)] = {
+          symbol: cell?.symbol || '空き',
+          locked: !!cell?.locked
+        };
+      });
+    });
+    return rows;
+  }
+
+  getVisibleWeekGroups(columns) {
+    const grouped = new Map();
+    columns.forEach(col => {
+      const [year, month, day] = col.dateStr.split('-').map(Number);
+      const weekStart = new Date(year, month - 1, day);
+      weekStart.setDate(weekStart.getDate() - weekStart.getDay());
+      const key = `${weekStart.getFullYear()}-${weekStart.getMonth() + 1}-${weekStart.getDate()}`;
+      if (!grouped.has(key)) grouped.set(key, []);
+      grouped.get(key).push(col);
+    });
+    return [...grouped.values()];
   }
 
   getRequiredCountForRoute(routeId, dateStr, ym, day) {
