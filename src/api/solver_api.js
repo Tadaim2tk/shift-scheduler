@@ -50,6 +50,8 @@ export class SolverAPI {
     }
 
     static async solve(payload) {
+        const controller = new AbortController();
+        const timeout = window.setTimeout(() => controller.abort(), 3000);
         try {
             const apiBase = import.meta.env.VITE_API_URL || 'http://localhost:8000';
             const response = await fetch(`${apiBase}/solve`, {
@@ -57,7 +59,8 @@ export class SolverAPI {
                 headers: {
                     'Content-Type': 'application/json',
                 },
-                body: JSON.stringify(payload)
+                body: JSON.stringify(payload),
+                signal: controller.signal
             });
 
             if (!response.ok) {
@@ -69,6 +72,8 @@ export class SolverAPI {
         } catch (error) {
             console.error('Solver API Error:', error);
             throw error;
+        } finally {
+            window.clearTimeout(timeout);
         }
     }
 }

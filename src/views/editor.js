@@ -534,7 +534,9 @@ export class EditorView {
           this.generator.generate(range.ym, {
             clearUnlocked: !preserveAll,
             startDay: range.startDay,
-            endDay: range.endDay
+            endDay: range.endDay,
+            timeBudgetMs: 10000,
+            attempts: 6
           });
         });
       };
