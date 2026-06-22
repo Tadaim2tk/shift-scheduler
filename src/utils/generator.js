@@ -40,9 +40,19 @@ export class Generator {
         return `${y}-${m}-${String(day).padStart(2, '0')}`;
     }
 
+    addDaysToDateStr(dateStr, offset) {
+        const [y, m, d] = dateStr.split('-').map(Number);
+        const date = new Date(y, m - 1, d + offset);
+        return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+    }
+
     isOffSym(sym) {
         if (!sym) return false;
         return this.constraints.isOff(sym) || sym === '希' || sym === '欠' || sym === '/';
+    }
+
+    isWorkSymForStreak(sym) {
+        return !!sym && sym !== '祝日' && !this.isOffSym(sym);
     }
 
     getCapabilities(staff, isSat, isSunOrHol) {
@@ -468,6 +478,7 @@ export class Generator {
                     isSat: JapaneseCalendar.isSaturday(dateStr),
                     isSun: JapaneseCalendar.isSunday(dateStr),
                     isHol: JapaneseCalendar.isHoliday(dateStr),
+                    dateStr,
                     domain: []
                 };
                 matrix[s.id][d].isSunOrHol = matrix[s.id][d].isSun || matrix[s.id][d].isHol;
@@ -613,9 +624,23 @@ export class Generator {
         return false;
     }
 
-    getScheduleSym(staffId, dateStr) {
-        const [y, m, d] = dateStr.split('-');
-        return this.store.state.schedule[`${y}-${m}`]?.[staffId]?.[d]?.symbol || null;
+    getMatrixOrScheduleSym(matrix, staffId, dateStr) {
+        const day = Number(dateStr.split('-')[2]);
+        const cell = matrix[staffId]?.[day];
+        if (cell?.dateStr === dateStr) return cell.symbol;
+        return this.getScheduleSym(staffId, dateStr);
+    }
+
+    getContextualWorkStreakDates(matrix, staffId, startDay, endDay, maxConsecutive) {
+        const startDateStr = matrix[staffId]?.[startDay]?.dateStr;
+        const endDateStr = matrix[staffId]?.[endDay]?.dateStr;
+        if (!startDateStr || !endDateStr) return [];
+
+        const dates = [];
+        for (let offset = -maxConsecutive; offset <= (endDay - startDay) + maxConsecutive; offset++) {
+            dates.push(this.addDaysToDateStr(startDateStr, offset));
+        }
+        return dates;
     }
 
     // --- Holiday Distribution ---
@@ -827,19 +852,9 @@ export class Generator {
             ? this.store.getMaxConsecutiveWork(staff)
             : (this.store.state.settings?.maxConsecutiveWork ?? 5);
 
-        // 1. Ensure maximum consecutive explicitly placed work does not exceed staff/global setting.
-        let currentWorkStreak = 0;
-        let maxStreak = 0;
-        for (let d = startDay; d <= endDay; d++) {
-            const sym = matrix[staffId][d].symbol;
-            if (this.isOffSym(sym) || sym === '祝日' || !sym) {
-                currentWorkStreak = 0;
-            } else {
-                currentWorkStreak++;
-                if (currentWorkStreak > maxStreak) maxStreak = currentWorkStreak;
-                if (currentWorkStreak > maxConsecutive) return false;
-            }
-        }
+        // 1. Ensure maximum consecutive work does not exceed staff/global setting,
+        // including already-generated adjacent months in the visible range.
+        if (!this.respectsMaxConsecutiveWork(matrix, staffId, startDay, endDay)) return false;
 
         // 2. Ensure the mathematical foundation of Off Days protects against over-limit streaks.
         let offDays = [];
@@ -881,13 +896,14 @@ export class Generator {
             : (this.store.state.settings?.maxConsecutiveWork ?? 5);
 
         let currentWorkStreak = 0;
-        for (let d = startDay; d <= endDay; d++) {
-            const sym = matrix[staffId][d].symbol;
-            if (this.isOffSym(sym) || sym === '祝日' || !sym) {
-                currentWorkStreak = 0;
-            } else {
+        const dateStrs = this.getContextualWorkStreakDates(matrix, staffId, startDay, endDay, maxConsecutive);
+        for (const dateStr of dateStrs) {
+            const sym = this.getMatrixOrScheduleSym(matrix, staffId, dateStr);
+            if (this.isWorkSymForStreak(sym)) {
                 currentWorkStreak++;
                 if (currentWorkStreak > maxConsecutive) return false;
+            } else {
+                currentWorkStreak = 0;
             }
         }
         return true;
@@ -952,11 +968,14 @@ export class Generator {
             if (worstDeficitDay) {
                 // Find a day with plenty of surplus bodies sitting around
                 let bestSurplusDay = null;
-                let maxSurp = 0;
+                let maxSurpScore = 0;
                 for (let d = startDay; d <= endDay; d++) {
-                    if (dailyStats[d] && dailyStats[d].surplus > maxSurp) {
+                    const sampleStaff = targetStaff[0];
+                    const restScore = sampleStaff ? this.getRestDestinationScore(matrix, allStaff, sampleStaff, d) : 0;
+                    const surplusScore = (dailyStats[d]?.surplus || 0) * 10 + restScore;
+                    if (dailyStats[d] && dailyStats[d].surplus > 0 && surplusScore > maxSurpScore) {
                         bestSurplusDay = d;
-                        maxSurp = dailyStats[d].surplus;
+                        maxSurpScore = surplusScore;
                     }
                 }
 
@@ -1092,7 +1111,10 @@ export class Generator {
             if (!this.canMoveRestBetweenDays(restSymbol, fromDay, d, yearMonth)) continue;
             destinationDays.push(d);
         }
-        return destinationDays.sort((a, b) => this.emptyCount(matrix, allStaff, b) - this.emptyCount(matrix, allStaff, a));
+        return destinationDays.sort((a, b) => (
+            this.getRestDestinationScore(matrix, allStaff, staff, b) -
+            this.getRestDestinationScore(matrix, allStaff, staff, a)
+        ));
     }
 
     findRestDestinationOptions(matrix, allStaff, staff, restSymbol, fromDay, dailySlots, startDay, endDay, yearMonth) {
@@ -1114,8 +1136,9 @@ export class Generator {
 
         const sorted = options.sort((a, b) => {
             if (a.mode !== b.mode) return a.mode === 'empty' ? -1 : 1;
-            const emptyDiff = this.emptyCount(matrix, allStaff, b.day) - this.emptyCount(matrix, allStaff, a.day);
-            if (emptyDiff !== 0) return emptyDiff;
+            const scoreDiff = this.getRestDestinationScore(matrix, allStaff, staff, b.day) -
+                this.getRestDestinationScore(matrix, allStaff, staff, a.day);
+            if (scoreDiff !== 0) return scoreDiff;
             return Math.abs(a.day - fromDay) - Math.abs(b.day - fromDay);
         });
         return [
@@ -1297,7 +1320,10 @@ export class Generator {
                 }
             }
 
-            validRange.sort(() => Math.random() - 0.5);
+            validRange.sort((a, b) => (
+                this.getRestDestinationScore(matrix, targetStaff, s, b) -
+                this.getRestDestinationScore(matrix, targetStaff, s, a)
+            ));
 
             for (const altDay of validRange) {
                 const altCell = matrix[s.id][altDay];
@@ -1742,6 +1768,12 @@ export class Generator {
         }, 0);
     }
 
+    getRestDestinationScore(matrix, allStaff, staff, day) {
+        const cell = matrix[staff.id]?.[day];
+        const weekendWeight = cell?.isSunOrHol ? 24 : cell?.isSat ? 16 : 0;
+        return this.emptyCount(matrix, allStaff, day) * 10 + weekendWeight;
+    }
+
     blankCount(matrix, staffList, day) {
         return staffList.reduce((count, staff) => (
             !matrix[staff.id][day].symbol ? count + 1 : count
@@ -1810,7 +1842,10 @@ export class Generator {
                         destinationDays.push(d);
                     }
 
-                    destinationDays.sort((a, b) => this.emptyCount(matrix, allStaff, b) - this.emptyCount(matrix, allStaff, a));
+                    destinationDays.sort((a, b) => (
+                        this.getRestDestinationScore(matrix, allStaff, staff, b) -
+                        this.getRestDestinationScore(matrix, allStaff, staff, a)
+                    ));
 
                     for (const destDay of destinationDays) {
                         const destCell = matrix[staff.id][destDay];
