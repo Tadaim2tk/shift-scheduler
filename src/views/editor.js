@@ -312,8 +312,9 @@ export class EditorView {
           <div style="display:flex; gap:10px;">
             <button id="btn-clear" class="danger outline">すべてクリア</button>
             <div class="button-group">
-              <!-- Valid IDs: btn-auto-fill, btn-auto-full -->
+              <!-- Valid IDs: btn-auto-fill, btn-auto-repair, btn-auto-full -->
               <button id="btn-auto-fill" title="手動入力を保持して空き枠を埋める">✨ 空き枠を自動入力</button>
+              <button id="btn-auto-repair" class="outline" title="ロック以外の既存配置を必要最小限だけ動かして欠員を解消">🔧 自動リペア</button>
               <button id="btn-auto-full" class="warning" title="ロックされていないセルをクリアして全体を再構築">🔒 リセット＆再構築</button>
             </div>
             <button id="btn-pdf-export" class="outline">📄 PDF出力</button>
@@ -523,11 +524,14 @@ export class EditorView {
     addListener('#btn-home', 'click', () => { window.location.hash = 'home'; });
 
     // Buttons - FIXED IDs
-    const runOptimization = async (btnId, preserveAll, originalText) => {
+    const runOptimization = async (btnId, mode, originalText) => {
       const { SolverAPI } = await import('../api/solver_api.js');
       const ranges = this.getVisibleRangeInfo();
       const btn = container.querySelector(btnId);
-      btn.innerText = 'Processing...'; btn.disabled = true;
+      btn.innerText = 'Solving...'; btn.disabled = true;
+
+      const preserveAll = mode === 'fill';
+      const allowRepairRetry = mode === 'fill';
 
       const runJsFallback = () => {
         btn.innerText = '自動入力中...';
@@ -552,7 +556,41 @@ export class EditorView {
         });
       };
 
+      const summarizeUnfilled = (result) => {
+        const items = result?.unfilledRequirements || [];
+        if (!items.length) return '';
+        const examples = items.slice(0, 12).map(item => {
+          const capable = item.capableStaff === 0 ? '担当可能者0人' : `担当可能者${item.capableStaff}人`;
+          const lockedAway = item.lockedAwayCapableStaff ? ` / ロックで使用不可${item.lockedAwayCapableStaff}人` : '';
+          return `${item.date}: ${item.routeId} 不足${item.shortage} (${capable}${lockedAway})`;
+        });
+        const more = items.length > examples.length ? `\nほか ${items.length - examples.length} 件` : '';
+        return `${examples.join('\n')}${more}`;
+      };
+
+      const summarizeMetrics = (result) => {
+        const m = result?.metrics || {};
+        const changed = result?.changedCells?.length ?? m.changedCells ?? 0;
+        return [
+          `欠員:${m.underfill ?? 0}`,
+          `能力外:${m.illegalAssignments ?? 0}`,
+          `重複/不要:${m.overfill ?? 0}`,
+          `週休非番違反:${m.weeklyRestViolations ?? 0}`,
+          `連勤違反:${m.consecutiveViolations ?? 0}`,
+          `変更:${changed}`
+        ].join(' / ');
+      };
+
       const validateSolverResult = (result, payload) => {
+        if (!resultCoversVisiblePeriod(result, payload)) {
+          throw Object.assign(new Error('Solver returned an incomplete schedule for the visible period.'), { solverRejected: true, result });
+        }
+        if (result.unfilledRequirements?.length) {
+          throw Object.assign(new Error('Solver returned a schedule with unfilled requirements.'), { solverRejected: true, result });
+        }
+        if (result.overfilledRequirements?.length) {
+          throw Object.assign(new Error('Solver returned a schedule with duplicate or unnecessary route assignments.'), { solverRejected: true, result });
+        }
         const issues = this.getSolverResultIssues(result, payload);
         if (issues.total > 0) {
           const parts = [];
@@ -560,86 +598,109 @@ export class EditorView {
           if (issues.invalid > 0) parts.push(`invalid ${issues.invalid}`);
           if (issues.streak > 0) parts.push(`streak ${issues.streak}`);
           if (issues.hiban > 0) parts.push(`hiban ${issues.hiban}`);
-          throw new Error(`Solver returned a locally invalid schedule: ${parts.join(', ')}`);
+          throw Object.assign(new Error(`Solver returned a locally invalid schedule: ${parts.join(', ')}`), { solverRejected: true, result, issues });
         }
+      };
+
+      const applySolverResult = (result, payload, effectiveMode) => {
+        Object.keys(result.matrix).forEach(s_id => {
+          const daysMap = result.matrix[s_id];
+          Object.keys(daysMap).forEach(idx_str => {
+            const originalDateStr = payload.dateLabels[idx_str].originalDate;
+            const [y, m, dstr] = originalDateStr.split('-');
+            const ym = `${y}-${m}`;
+            const customDayStr = String(parseInt(dstr, 10)).padStart(2, '0');
+
+            let sch = this.store.getSchedule(ym) || {};
+            if (!sch[s_id]) sch[s_id] = {};
+
+            const originalCell = this.store.getSchedule(ym)?.[s_id]?.[customDayStr] || {};
+            const solvedSymbol = daysMap[idx_str].symbol;
+            if (!solvedSymbol || solvedSymbol === '空き') {
+              delete sch[s_id][customDayStr];
+            } else {
+              sch[s_id][customDayStr] = {
+                symbol: solvedSymbol,
+                locked: effectiveMode === 'fill' && originalCell.symbol ? (originalCell.locked || false) : daysMap[idx_str].locked,
+                type: ['週休', '非番', '年休', '祝日', '希', '欠', '／'].includes(solvedSymbol) ? 'OFF' : 'ROUTE'
+              };
+            }
+            this.store.updateSchedule(ym, sch);
+          });
+        });
+      };
+
+      const solveOnce = async (flatDates, effectiveMode) => {
+        const payload = SolverAPI.buildPayload(this.store, flatDates, effectiveMode === 'fill', effectiveMode);
+        const result = await SolverAPI.solve(payload);
+        if (result.status !== 'success') {
+          throw Object.assign(new Error('Optimization Error: ' + result.message), { solverRejected: true, result });
+        }
+        validateSolverResult(result, payload);
+        return { payload, result };
       };
 
       try {
         let flatDates = [];
         ranges.forEach(range => {
-            for (let d = range.startDay; d <= range.endDay; d++) {
-                flatDates.push(`${range.ym}-${String(d).padStart(2, '0')}`);
-            }
+          for (let d = range.startDay; d <= range.endDay; d++) {
+            flatDates.push(`${range.ym}-${String(d).padStart(2, '0')}`);
+          }
         });
 
-        const payload = SolverAPI.buildPayload(this.store, flatDates, preserveAll);
-        const result = await SolverAPI.solve(payload);
+        let effectiveMode = mode;
+        let solved;
+        try {
+          solved = await solveOnce(flatDates, mode);
+        } catch (e) {
+          if (allowRepairRetry && e.solverRejected) {
+            console.warn('Fill-only solve was rejected. Retrying in repair mode.', e);
+            btn.innerText = 'Repairing...';
+            effectiveMode = 'repair';
+            solved = await solveOnce(flatDates, 'repair');
+          } else {
+            throw e;
+          }
+        }
 
-        if (result.status === 'success') {
-            if (!resultCoversVisiblePeriod(result, payload)) {
-                throw new Error('Solver returned an incomplete schedule for the visible period.');
-            }
-            if (result.unfilledRequirements?.length) {
-                throw new Error('Solver returned a schedule with unfilled requirements.');
-            }
-            validateSolverResult(result, payload);
-            Object.keys(result.matrix).forEach(s_id => {
-                const daysMap = result.matrix[s_id];
-                Object.keys(daysMap).forEach(idx_str => {
-                    const originalDateStr = payload.dateLabels[idx_str].originalDate;
-                    const [y, m, dstr] = originalDateStr.split('-');
-                    const ym = `${y}-${m}`;
-                    const customDayStr = String(parseInt(dstr, 10)).padStart(2, '0');
-
-                    let sch = this.store.getSchedule(ym) || {};
-                    if (!sch[s_id]) sch[s_id] = {};
-                    
-                    const originalCell = this.store.getSchedule(ym)?.[s_id]?.[customDayStr] || {};
-                    
-                    const solvedSymbol = daysMap[idx_str].symbol;
-                    if (!solvedSymbol || solvedSymbol === '空き') {
-                        delete sch[s_id][customDayStr];
-                    } else {
-                        sch[s_id][customDayStr] = {
-                            symbol: solvedSymbol,
-                            locked: preserveAll && originalCell.symbol ? (originalCell.locked || false) : daysMap[idx_str].locked,
-                            type: ['週休', '非番', '年休', '祝日', '希', '欠', '／'].includes(solvedSymbol) ? 'OFF' : 'ROUTE'
-                        };
-                    }
-                    this.store.updateSchedule(ym, sch);
-                });
-            });
-            if (result.unfilledRequirements?.length) {
-                const examples = result.unfilledRequirements.slice(0, 10).map(item => {
-                    const capable = item.capableStaff === 0 ? '担当可能者0人' : `担当可能者${item.capableStaff}人`;
-                    return `${item.date}: ${item.routeId} 不足${item.shortage} (${capable})`;
-                });
-                const more = result.unfilledRequirements.length > examples.length
-                    ? `\nほか ${result.unfilledRequirements.length - examples.length} 件`
-                    : '';
-                alert(`生成は完了しましたが、ルールを守ると残る欠員があります。\n\n${examples.join('\n')}${more}`);
-            }
-        } else {
-            throw new Error('Optimization Error: ' + result.message);
+        applySolverResult(solved.result, solved.payload, effectiveMode);
+        const changed = solved.result.changedCells?.length || 0;
+        if (effectiveMode === 'repair' && (mode !== 'repair' || changed > 0)) {
+          const sample = (solved.result.changedCells || []).slice(0, 8).map(item => `${item.date} ${item.staffId}: ${item.from}→${item.to}`);
+          const detail = sample.length ? `\n\n変更例:\n${sample.join('\n')}${changed > sample.length ? `\nほか ${changed - sample.length} 件` : ''}` : '';
+          alert(`空き枠固定では解けなかったため、自動リペアで既存配置を必要最小限だけ動かしました。\n${summarizeMetrics(solved.result)}${detail}`);
         }
         window.location.reload();
-      } catch (e) { 
-        console.error(e); 
+      } catch (e) {
+        console.error(e);
+        if (e.solverRejected) {
+          const result = e.result;
+          const unfilled = summarizeUnfilled(result);
+          const metrics = summarizeMetrics(result);
+          const message = unfilled
+            ? `Python solver は解を返しましたが、採用基準を満たさないため反映しませんでした。\n${metrics}\n\n残った欠員:\n${unfilled}`
+            : `Python solver は解を返しましたが、ローカル検証で不採用になりました。\n${metrics}\n\n${e.message}`;
+          alert(message);
+          btn.disabled = false;
+          btn.innerText = originalText;
+          return;
+        }
         try {
-            console.warn('Python solver unavailable. Falling back to in-browser generator.', e);
-            runJsFallback();
-            window.location.reload();
+          console.warn('Python solver unavailable. Falling back to in-browser generator.', e);
+          runJsFallback();
+          window.location.reload();
         } catch (fallbackError) {
-            console.error(fallbackError);
-            alert('自動生成に失敗しました。Python solver とJS生成の両方でエラーが発生しました: ' + fallbackError.message);
-            btn.disabled = false;
-            btn.innerText = originalText;
+          console.error(fallbackError);
+          alert('自動生成に失敗しました。Python solver とJS生成の両方でエラーが発生しました: ' + fallbackError.message);
+          btn.disabled = false;
+          btn.innerText = originalText;
         }
       }
     };
 
-    addListener('#btn-auto-fill', 'click', () => runOptimization('#btn-auto-fill', true, '✨ 空き枠を自動入力'));
-    addListener('#btn-auto-full', 'click', () => runOptimization('#btn-auto-full', false, '🔒 リセット＆再構築'));
+    addListener('#btn-auto-fill', 'click', () => runOptimization('#btn-auto-fill', 'fill', '✨ 空き枠を自動入力'));
+    addListener('#btn-auto-repair', 'click', () => runOptimization('#btn-auto-repair', 'repair', '🔧 自動リペア'));
+    addListener('#btn-auto-full', 'click', () => runOptimization('#btn-auto-full', 'full', '🔒 リセット＆再構築'));
 
     addListener('#btn-clear', 'click', () => {
       container.querySelector('#confirm-modal').classList.remove('hidden');
