@@ -24,6 +24,7 @@ def run_optimization(request_data: Dict[str, Any]) -> Dict[str, Any]:
     days = range(1, days_in_month + 1)
     route_ids = [r['id'] for r in routes]
     route_by_id = {r['id']: r for r in routes}
+    soft_route_ids = {r['id'] for r in routes if r.get('softMissing') is True}
     all_route_ids = route_ids + OFF_ROUTES
 
     # ----------------------------------------------------
@@ -86,7 +87,13 @@ def run_optimization(request_data: Dict[str, Any]) -> Dict[str, Any]:
             caps.extend(staff.get(key, []) or [])
         return list(dict.fromkeys(caps))
 
+    def staff_max_consecutive(staff: Dict[str, Any]) -> int:
+        global_max = int(settings.get('maxConsecutiveWork', 5) or 5)
+        return int((staff.get('attributes', {}) or {}).get('maxConsecutiveWork', global_max) or global_max)
+
     def requires_weekly_hiban(staff: Dict[str, Any]) -> bool:
+        if staff_max_consecutive(staff) >= 6:
+            return False
         # Keep this aligned with the frontend post-solve validator.  People who
         # only exist for historical imports, or only have office/evening helper
         # duties, should not distort the carrier/off-day rule.
@@ -103,6 +110,9 @@ def run_optimization(request_data: Dict[str, Any]) -> Dict[str, Any]:
 
     def has_any_operational_capability(staff: Dict[str, Any]) -> bool:
         return any(cap in route_by_id for cap in all_staff_caps(staff))
+
+    def requires_weekly_shukyu(staff: Dict[str, Any]) -> bool:
+        return has_any_operational_capability(staff) and staff_max_consecutive(staff) < 7
 
     def locked_cell_for(staff: Dict[str, Any], d: int) -> Dict[str, Any]:
         return (current_schedule.get(str(staff.get('id')), {}) or {}).get(str(d), {}) or {}
@@ -155,14 +165,14 @@ def run_optimization(request_data: Dict[str, Any]) -> Dict[str, Any]:
             required_today = {r['id'] for r in routes if required_count_for(r, d) > 0}
             usable_required_routes = allowed_routes.intersection(required_today)
             if (not is_locked) and (is_sat or meta.get('isSun', False)) and not meta.get('isHol', False) and not usable_required_routes:
-                if meta.get('isSun', False):
+                if meta.get('isSun', False) and requires_weekly_shukyu(staff):
                     # If a person has no usable Sunday assignment, treat Sunday
                     # as weekly rest rather than a dangling blank.
                     model.Add(x[(s_idx, d, '週休')] == 1)
-                elif is_sat:
+                elif is_sat and requires_weekly_hiban(staff):
                     model.Add(x[(s_idx, d, '非番')] == 1)
 
-            if (not is_locked) and meta.get('isSun', False) and not meta.get('isHol', False):
+            if (not is_locked) and requires_weekly_shukyu(staff) and meta.get('isSun', False) and not meta.get('isHol', False):
                 sunday_rule_terms.extend([x[(s_idx, d, '非番')], x[(s_idx, d, '空き')]])
 
             for r_id in route_ids:
@@ -211,8 +221,7 @@ def run_optimization(request_data: Dict[str, Any]) -> Dict[str, Any]:
     # Consecutive work soft rule.
     consec_slack = []
     for s_idx, staff in enumerate(staff_list):
-        global_max = int(settings.get('maxConsecutiveWork', 5) or 5)
-        max_work = int((staff.get('attributes', {}) or {}).get('maxConsecutiveWork', global_max) or global_max)
+        max_work = staff_max_consecutive(staff)
         limit_days = max_work + 1
         if limit_days <= 1 or days_in_month < limit_days:
             continue
@@ -225,8 +234,8 @@ def run_optimization(request_data: Dict[str, Any]) -> Dict[str, Any]:
     # Weekly rest rules.
     weekly_rule_slacks = []
     min_off_slacks = []
-    weekly_shukyu = max(0, int(settings.get('weeklyShukyu', 1) or 1))
-    min_off_per_4w = max(0, int(settings.get('minOffPer4Weeks', 8) or 8))
+    weekly_shukyu = max(0, int(settings.get('weeklyShukyu') if settings.get('weeklyShukyu') is not None else 1))
+    min_off_per_4w = max(0, int(settings.get('minOffPer4Weeks') if settings.get('minOffPer4Weeks') is not None else 8))
     prorated_min_off = int(math.ceil(min_off_per_4w * days_in_month / 28)) if days_in_month else 0
 
     for s_idx, staff in enumerate(staff_list):
@@ -237,18 +246,19 @@ def run_optimization(request_data: Dict[str, Any]) -> Dict[str, Any]:
             # assign visible rest symbols, so do not force 空き here.
             continue
 
-        for week_days in full_weeks:
-            shukyu_count = sum(x[(s_idx, d, '週休')] for d in week_days)
-            shukyu_under = model.NewIntVar(0, len(week_days), f'shukyu_under_{s_idx}_{week_days[0]}')
-            shukyu_over = model.NewIntVar(0, len(week_days), f'shukyu_over_{s_idx}_{week_days[0]}')
-            model.Add(shukyu_count + shukyu_under == weekly_shukyu + shukyu_over)
-            weekly_rule_slacks.extend([shukyu_under, shukyu_over])
+        if requires_weekly_shukyu(staff):
+            for week_days in full_weeks:
+                shukyu_count = sum(x[(s_idx, d, '週休')] for d in week_days)
+                shukyu_under = model.NewIntVar(0, len(week_days), f'shukyu_under_{s_idx}_{week_days[0]}')
+                shukyu_over = model.NewIntVar(0, len(week_days), f'shukyu_over_{s_idx}_{week_days[0]}')
+                model.Add(shukyu_count + shukyu_under == weekly_shukyu + shukyu_over)
+                weekly_rule_slacks.extend([shukyu_under, shukyu_over])
 
-            if requires_weekly_hiban(staff):
-                hiban_week_count = sum(x[(s_idx, d, '非番')] for d in week_days)
-                hiban_week_over = model.NewIntVar(0, len(week_days), f'hiban_week_over_{s_idx}_{week_days[0]}')
-                model.Add(hiban_week_count <= 2 + hiban_week_over)
-                weekly_rule_slacks.append(hiban_week_over)
+                if requires_weekly_hiban(staff):
+                    hiban_week_count = sum(x[(s_idx, d, '非番')] for d in week_days)
+                    hiban_week_over = model.NewIntVar(0, len(week_days), f'hiban_week_over_{s_idx}_{week_days[0]}')
+                    model.Add(hiban_week_count <= 2 + hiban_week_over)
+                    weekly_rule_slacks.append(hiban_week_over)
 
         if requires_weekly_hiban(staff):
             for week_days in hiban_weeks:
@@ -265,10 +275,18 @@ def run_optimization(request_data: Dict[str, Any]) -> Dict[str, Any]:
             model.Add(hiban_total + hiban_total_under == len(hiban_weeks) + hiban_total_over)
             weekly_rule_slacks.extend([hiban_total_under, hiban_total_over])
 
-        if prorated_min_off > 0:
+        max_work = staff_max_consecutive(staff)
+        if max_work >= 7:
+            staff_min_off = 0
+        elif max_work >= 6:
+            staff_min_off = int(math.ceil(days_in_month / 7)) if days_in_month else 0
+        else:
+            staff_min_off = prorated_min_off
+
+        if staff_min_off > 0:
             off_count = sum(x[(s_idx, d, r_id)] for d in days for r_id in OFF_ROUTES if r_id != '空き')
             min_off_under = model.NewIntVar(0, days_in_month, f'min_off_under_{s_idx}')
-            model.Add(off_count + min_off_under >= prorated_min_off)
+            model.Add(off_count + min_off_under >= staff_min_off)
             min_off_slacks.append(min_off_under)
 
     # Do not invent manual-only symbols unless the user locked them. 祝日 can be
@@ -344,7 +362,11 @@ def run_optimization(request_data: Dict[str, Any]) -> Dict[str, Any]:
             changed_terms.append(changed)
             preserved_terms.append(x[(s_idx, d, symbol)])
 
-    total_underfill = sum(slack_under.values()) if slack_under else 0
+    hard_underfill_terms = [value for (d, r_id), value in slack_under.items() if r_id not in soft_route_ids]
+    soft_underfill_terms = [value for (d, r_id), value in slack_under.items() if r_id in soft_route_ids]
+    total_hard_underfill = sum(hard_underfill_terms) if hard_underfill_terms else 0
+    total_soft_underfill = sum(soft_underfill_terms) if soft_underfill_terms else 0
+    total_underfill = total_hard_underfill + total_soft_underfill
     total_overfill = sum(slack_over.values()) if slack_over else 0
     total_illegal = sum(illegal_route_terms) if illegal_route_terms else 0
     total_sunday_rule = sum(sunday_rule_terms) if sunday_rule_terms else 0
@@ -468,9 +490,24 @@ def run_optimization(request_data: Dict[str, Any]) -> Dict[str, Any]:
     phase_results.append({'phase': 'minimize_rest_violations', 'status': solver.StatusName(status), 'score': best_rest})
     model.Add(rest_violation_score == best_rest)
 
-    # Phase 3: now reduce visible missing routes as much as possible.  Remaining
-    # underfill is handed back to the user for manual 欠区 / 計画 / no-assignment
-    # decisions; the solver must not invent 年休 or 欠区 placeholders.
+    # Phase 3: first reduce hard route holes.  Soft-missing routes such as 計画
+    # are still filled when capacity exists, but they may be sacrificed after
+    # normal capacity is exhausted so harder delivery routes do not remain short.
+    solver = new_solver()
+    model.ClearObjective()
+    model.Minimize(total_hard_underfill)
+    status = solver.Solve(model)
+    if not is_solved(status):
+        return {
+            'status': 'error',
+            'message': 'Solver kept rest rules but could not minimize hard missing routes.',
+            'status_code': solver.StatusName(status),
+            'generationMode': generation_mode,
+        }
+    best_hard_underfill = int(solver.Value(total_hard_underfill)) if slack_under else 0
+    phase_results.append({'phase': 'minimize_hard_underfill', 'status': solver.StatusName(status), 'hardUnderfill': best_hard_underfill})
+    model.Add(total_hard_underfill == best_hard_underfill)
+
     solver = new_solver()
     model.ClearObjective()
     model.Minimize(total_underfill)
@@ -478,12 +515,12 @@ def run_optimization(request_data: Dict[str, Any]) -> Dict[str, Any]:
     if not is_solved(status):
         return {
             'status': 'error',
-            'message': 'Solver kept rest rules but could not minimize missing routes.',
+            'message': 'Solver minimized hard missing routes but could not minimize soft remaining routes.',
             'status_code': solver.StatusName(status),
             'generationMode': generation_mode,
         }
     best_underfill = int(solver.Value(total_underfill)) if slack_under else 0
-    phase_results.append({'phase': 'minimize_underfill', 'status': solver.StatusName(status), 'underfill': best_underfill})
+    phase_results.append({'phase': 'minimize_total_underfill', 'status': solver.StatusName(status), 'underfill': best_underfill})
     model.Add(total_underfill == best_underfill)
 
     # Phase 4: tie-break only.  Preserve existing cells and improve balance
@@ -565,6 +602,7 @@ def run_optimization(request_data: Dict[str, Any]) -> Dict[str, Any]:
                     'day': d,
                     'date': original_date,
                     'routeId': r_id,
+                    'softMissing': r_id in soft_route_ids,
                     'required': required_count,
                     'assigned': assigned_count,
                     'shortage': required_count - assigned_count,
@@ -607,6 +645,8 @@ def run_optimization(request_data: Dict[str, Any]) -> Dict[str, Any]:
 
     metrics = {
         'underfill': solver_value(total_underfill),
+        'hardUnderfill': solver_value(total_hard_underfill),
+        'softUnderfill': solver_value(total_soft_underfill),
         'overfill': solver_value(total_overfill),
         'illegalAssignments': solver_value(total_illegal),
         'managerPresenceViolations': solver_value(total_manager_presence),

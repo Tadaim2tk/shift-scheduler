@@ -201,6 +201,7 @@ export class SettingsView {
                         <th>担務名 (ID)</th>
                         <th>シフト上の表示</th>
                         <th>配置する曜日</th>
+                        <th>欠区許容</th>
                         <th>通区状況</th>
                         <th>削除</th>
                     </tr>
@@ -240,6 +241,12 @@ export class SettingsView {
                                         <input class="route-multiple-toggle" type="checkbox" data-idx="${idx}" ${r.isMultiple ? 'checked' : ''}> 1日に2人以上必要な担務
                                     </label>
                                 </div>
+                            </td>
+                            <td style="text-align:center;">
+                                <label style="font-size:0.75em; color:#ccc; display:flex; flex-direction:column; align-items:center; gap:4px; cursor:pointer;">
+                                    <input class="route-soft-toggle" type="checkbox" data-idx="${idx}" ${r.softMissing ? 'checked' : ''}>
+                                    不足OK
+                                </label>
                             </td>
                             <td>
                                 <button class="small outline" onclick="window.app.settings.openRouteStaffModal(${idx})">設定</button>
@@ -388,6 +395,13 @@ export class SettingsView {
           const idx = parseInt(e.target.dataset.idx);
           this.store.updateRoute(idx, 'isMultiple', e.target.checked);
           this.updateUI(); // re-render
+        });
+      });
+
+      this.container.querySelectorAll('.route-soft-toggle').forEach(toggle => {
+        toggle.addEventListener('change', (e) => {
+          const idx = parseInt(e.target.dataset.idx);
+          this.store.updateRoute(idx, 'softMissing', e.target.checked);
         });
       });
     } else if (this.activeTab === 'symbols') {
