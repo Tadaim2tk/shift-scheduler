@@ -1066,7 +1066,7 @@ export class EditorView {
     this.store.state.staff.forEach(staff => {
       const row = result.matrix?.[String(staff.id)];
       if (!row) return;
-      if (this.countSolverMaxStreakViolations(staff, row, dateIndexes) > 0) issues.streak++;
+        if (this.countSolverMaxStreakViolations(staff, row, dateIndexes, payload.dateLabels || {}) > 0) issues.streak++;
       issues.hiban += this.countSolverHibanViolations(staff, row, dateIndexes, payload.dateLabels || {});
     });
 
@@ -1103,14 +1103,53 @@ export class EditorView {
     return caps.includes(routeId);
   }
 
-  countSolverMaxStreakViolations(staff, row, dateIndexes) {
+  countSolverMaxStreakViolations(staff, row, dateIndexes, labels = {}) {
     const maxConsecutive = this.store.getMaxConsecutiveWork
       ? this.store.getMaxConsecutiveWork(staff)
       : (this.store.state.settings?.maxConsecutiveWork ?? 5);
+    const sortedIndexes = [...dateIndexes].sort((a, b) => Number(a) - Number(b));
+    const firstDateStr = labels[sortedIndexes[0]]?.originalDate;
+    const lastDateStr = labels[sortedIndexes[sortedIndexes.length - 1]]?.originalDate;
+    if (!firstDateStr || !lastDateStr) {
+      let streak = 0;
+      let violations = 0;
+      sortedIndexes.forEach(dayIndex => {
+        const symbol = row?.[dayIndex]?.symbol;
+        if (this.isSolverRouteSymbol(symbol)) {
+          streak++;
+          if (streak > maxConsecutive) violations++;
+        } else {
+          streak = 0;
+        }
+      });
+      return violations;
+    }
+
+    const indexByDate = new Map(
+      sortedIndexes
+        .filter(dayIndex => labels[dayIndex]?.originalDate)
+        .map(dayIndex => [labels[dayIndex].originalDate, dayIndex])
+    );
+    const addDays = (dateStr, offset) => {
+      const [year, month, day] = dateStr.split('-').map(Number);
+      const date = new Date(year, month - 1, day + offset);
+      return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+    };
+    const getStoredSymbol = (dateStr) => {
+      const [year, month, day] = dateStr.split('-');
+      return this.store.getSchedule(`${year}-${month}`)?.[staff.id]?.[day]?.symbol;
+    };
+
     let streak = 0;
     let violations = 0;
-    dateIndexes.forEach(dayIndex => {
-      const symbol = row?.[dayIndex]?.symbol;
+    const dateStrs = Array.from({ length: sortedIndexes.length + maxConsecutive * 2 }, (_, idx) => addDays(firstDateStr, idx - maxConsecutive))
+      .filter(dateStr => dateStr <= addDays(lastDateStr, maxConsecutive));
+
+    dateStrs.forEach(dateStrOrIndex => {
+      const dayIndex = indexByDate.get(dateStrOrIndex) || dateStrOrIndex;
+      const symbol = indexByDate.has(dateStrOrIndex)
+        ? row?.[dayIndex]?.symbol
+        : getStoredSymbol(dateStrOrIndex);
       if (this.isSolverRouteSymbol(symbol)) {
         streak++;
         if (streak > maxConsecutive) violations++;

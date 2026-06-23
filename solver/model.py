@@ -9,6 +9,7 @@ def run_optimization(request_data: Dict[str, Any]) -> Dict[str, Any]:
     routes = request_data.get('routes', [])
     days_in_month = int(request_data.get('daysInMonth', 28))
     current_schedule = request_data.get('currentSchedule', {}) or {}
+    context_schedule = request_data.get('contextSchedule', {}) or {}
     date_labels = request_data.get('dateLabels', {}) or {}
     settings = request_data.get('settings', {}) or {}
     generation_mode = request_data.get('generationMode', 'fill') or 'fill'
@@ -113,6 +114,9 @@ def run_optimization(request_data: Dict[str, Any]) -> Dict[str, Any]:
 
     def requires_weekly_shukyu(staff: Dict[str, Any]) -> bool:
         return has_any_operational_capability(staff) and staff_max_consecutive(staff) < 7
+
+    def is_work_symbol_for_streak(symbol: str) -> bool:
+        return bool(symbol) and symbol not in OFF_ROUTES
 
     def locked_cell_for(staff: Dict[str, Any], d: int) -> Dict[str, Any]:
         return (current_schedule.get(str(staff.get('id')), {}) or {}).get(str(d), {}) or {}
@@ -220,16 +224,62 @@ def run_optimization(request_data: Dict[str, Any]) -> Dict[str, Any]:
 
     # Consecutive work soft rule.
     consec_slack = []
+    generated_date_to_day = {
+        meta['originalDate']: d
+        for d, meta in day_meta.items()
+        if meta.get('originalDate')
+    }
+    parsed_generated_dates = sorted(
+        meta['originalDate']
+        for meta in day_meta.values()
+        if meta.get('originalDate')
+    )
+
     for s_idx, staff in enumerate(staff_list):
         max_work = staff_max_consecutive(staff)
         limit_days = max_work + 1
-        if limit_days <= 1 or days_in_month < limit_days:
+        if limit_days <= 1:
             continue
-        for start_d in range(1, days_in_month - limit_days + 2):
-            window = range(start_d, start_d + limit_days)
-            slack = model.NewBoolVar(f'consec_slack_{s_idx}_{start_d}')
-            model.Add(sum(x[(s_idx, wd, off_r)] for wd in window for off_r in OFF_ROUTES) + slack >= 1)
-            consec_slack.append(slack)
+
+        if parsed_generated_dates:
+            first_date = datetime.strptime(parsed_generated_dates[0], '%Y-%m-%d').date()
+            last_date = datetime.strptime(parsed_generated_dates[-1], '%Y-%m-%d').date()
+            sequence = []
+            cursor = first_date - timedelta(days=max_work)
+            end_cursor = last_date + timedelta(days=max_work)
+            staff_context = context_schedule.get(str(staff.get('id')), {}) or {}
+
+            while cursor <= end_cursor:
+                date_str = cursor.isoformat()
+                generated_day = generated_date_to_day.get(date_str)
+                if generated_day:
+                    sequence.append({
+                        'date': date_str,
+                        'isGenerated': True,
+                        'workExpr': sum(x[(s_idx, generated_day, r_id)] for r_id in route_ids),
+                    })
+                else:
+                    symbol = (staff_context.get(date_str, {}) or {}).get('symbol')
+                    sequence.append({
+                        'date': date_str,
+                        'isGenerated': False,
+                        'workExpr': 1 if is_work_symbol_for_streak(symbol) else 0,
+                    })
+                cursor += timedelta(days=1)
+
+            for start_pos in range(0, len(sequence) - limit_days + 1):
+                window = sequence[start_pos:start_pos + limit_days]
+                if not any(item['isGenerated'] for item in window):
+                    continue
+                slack = model.NewBoolVar(f'consec_slack_{s_idx}_{start_pos}')
+                model.Add(sum(item['workExpr'] for item in window) <= max_work + slack)
+                consec_slack.append(slack)
+        else:
+            for start_d in range(1, days_in_month - limit_days + 2):
+                window = range(start_d, start_d + limit_days)
+                slack = model.NewBoolVar(f'consec_slack_{s_idx}_{start_d}')
+                model.Add(sum(x[(s_idx, wd, off_r)] for wd in window for off_r in OFF_ROUTES) + slack >= 1)
+                consec_slack.append(slack)
 
     # Weekly rest rules.
     weekly_rule_slacks = []
