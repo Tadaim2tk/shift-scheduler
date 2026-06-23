@@ -8,11 +8,50 @@ export class SolverAPI {
         
         const dateLabels = {};
         const flatSchedule = {}; // s_id -> { "1": {"symbol": "...", "locked": ...} }
+        const contextSchedule = {}; // s_id -> { "YYYY-MM-DD": {"symbol": "..."} }
+        const maxContextDays = Math.max(
+            store.state.settings?.maxConsecutiveWork ?? 5,
+            ...store.state.staff.map(s => s.attributes?.maxConsecutiveWork ?? 0)
+        );
         
         // Build empty mapping
         store.state.staff.forEach(s => {
             flatSchedule[s.id] = {};
+            contextSchedule[s.id] = {};
         });
+
+        const addDays = (dateStr, offset) => {
+            const [y, m, d] = dateStr.split('-').map(Number);
+            const date = new Date(y, m - 1, d + offset);
+            return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+        };
+
+        const captureContextDate = (dateStr) => {
+            const [y, m, d] = dateStr.split('-');
+            const ym = `${y}-${m}`;
+            const monthSch = store.getSchedule(ym);
+            store.state.staff.forEach(s => {
+                const cell = monthSch?.[s.id]?.[d];
+                if (cell && cell.symbol) {
+                    contextSchedule[s.id][dateStr] = {
+                        symbol: cell.symbol,
+                        type: cell.type,
+                        locked: Boolean(cell.locked)
+                    };
+                }
+            });
+        };
+
+        if (flatDates.length > 0) {
+            const firstDate = flatDates[0];
+            const lastDate = flatDates[flatDates.length - 1];
+            for (let offset = -maxContextDays; offset < 0; offset++) {
+                captureContextDate(addDays(firstDate, offset));
+            }
+            for (let offset = 1; offset <= maxContextDays; offset++) {
+                captureContextDate(addDays(lastDate, offset));
+            }
+        }
 
         // Map original exact days to 1...28 indexed days since Python expects sequential continuous tracking
         flatDates.forEach((dateStr, idx) => {
@@ -51,6 +90,7 @@ export class SolverAPI {
             routes: store.state.routes,
             settings: store.state.settings || {},
             currentSchedule: flatSchedule,
+            contextSchedule,
             dateLabels: dateLabels
         };
     }
