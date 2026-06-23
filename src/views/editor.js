@@ -540,6 +540,7 @@ export class EditorView {
         const m = result?.metrics || {};
         return (m.illegalAssignments || 0) * 1e6
           + (m.overfill || 0) * 1e5
+          + (m.managerPresenceViolations || 0) * 1e4
           + (m.weeklyRestViolations || 0) * 1e3
           + (m.minOffViolations || 0) * 1e2
           + (m.consecutiveViolations || 0) * 10;
@@ -581,6 +582,7 @@ export class EditorView {
           `欠員:${m.underfill ?? 0}`,
           `能力外:${m.illegalAssignments ?? 0}`,
           `重複/不要:${m.overfill ?? 0}`,
+          `管理者不在(平日):${m.managerPresenceViolations ?? 0}`,
           `週休非番違反:${m.weeklyRestViolations ?? 0}`,
           `連勤違反:${m.consecutiveViolations ?? 0}`,
           `4週休不足:${m.minOffViolations ?? 0}`,
@@ -707,7 +709,7 @@ export class EditorView {
             notes.push(`空き（余剰）が ${blankCount} 人日あります。有休消化などで誰かを追加で休ませる場合は手動で割り当ててください（年休は自動付与していません）。`);
           }
           const head = (missing > 0 || blankCount > 0)
-            ? '生成しました（休み・連勤・能力・重複の違反は0です）。'
+            ? '生成しました（休み・連勤・能力・重複・平日管理者の違反は0です）。'
             : '生成しました（欠員・空きなし、違反なし）。';
           if (notes.length || missing > 0 || blankCount > 0) {
             alert(`${head}\n${summarizeMetrics(best.result)}${notes.length ? '\n\n' + notes.join('\n\n') : ''}`);
@@ -716,7 +718,7 @@ export class EditorView {
           // A hard rule could not be satisfied — almost always because of
           // conflicting locked cells or fixed leave.
           const body = [
-            'ベストな結果を反映しましたが、絶対ルール（休み数・連勤・能力・重複）に違反が残っています。',
+            'ベストな結果を反映しましたが、絶対ルール（休み数・連勤・能力・重複・平日の課長代理以上の配置）に違反が残っています。',
             summarizeMetrics(best.result),
             '\nこれは通常、ロック（鍵マーク）や固定休が矛盾しているときに起きます。該当セルのロックを外して「自動リペア」を再実行してください。',
           ];
