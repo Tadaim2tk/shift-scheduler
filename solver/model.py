@@ -167,6 +167,11 @@ def run_optimization(request_data: Dict[str, Any]) -> Dict[str, Any]:
 
             for r_id in route_ids:
                 if r_id not in allowed_routes and not (is_locked and locked_symbol == r_id):
+                    # Capability / availability is a hard rule: never assign a
+                    # route to a staff member who cannot do it on that day
+                    # (manually locked cells are the only exception).  Leaving a
+                    # route short (欠区) is preferred over an out-of-skill match.
+                    model.Add(x[(s_idx, d, r_id)] == 0)
                     illegal_route_terms.append(x[(s_idx, d, r_id)])
 
     # Route coverage.  Underfill and overfill are soft variables; the staged
@@ -290,6 +295,30 @@ def run_optimization(request_data: Dict[str, Any]) -> Dict[str, Any]:
         model.Add(total_work_days <= max_work_days)
         model.Add(total_work_days >= min_work_days)
 
+    # Management presence: at least one 課長代理-or-above (課長代理 / 課長) must be
+    # working an actual route on every weekday (平日; not Sat/Sun/holiday).  Kept
+    # soft so a bad set of locks cannot make the whole solve infeasible, but it is
+    # priced in the top (severe) tier so it is effectively always satisfied.
+    MANAGER_TITLES = ('課長', '課長代理')
+    manager_indexes = [
+        s_idx for s_idx, staff in enumerate(staff_list)
+        if (staff.get('attributes', {}) or {}).get('title') in MANAGER_TITLES
+    ]
+    manager_presence_slacks = []
+    if manager_indexes:
+        for d in days:
+            meta = day_meta.get(d, {})
+            if meta.get('isSat') or meta.get('isSunHol'):
+                continue
+            managers_working = sum(
+                x[(s_idx, d, r_id)]
+                for s_idx in manager_indexes
+                for r_id in route_ids
+            )
+            presence_under = model.NewBoolVar(f'manager_presence_under_{d}')
+            model.Add(managers_working + presence_under >= 1)
+            manager_presence_slacks.append(presence_under)
+
     # Existing schedule preservation for repair/full modes.  This is the key
     # difference from hard-locking every existing cell: the solver may move a
     # non-locked assignment if that is needed to fill real route holes.
@@ -322,6 +351,7 @@ def run_optimization(request_data: Dict[str, Any]) -> Dict[str, Any]:
     total_consecutive = sum(consec_slack) if consec_slack else 0
     total_weekly = sum(weekly_rule_slacks) if weekly_rule_slacks else 0
     total_min_off = sum(min_off_slacks) if min_off_slacks else 0
+    total_manager_presence = sum(manager_presence_slacks) if manager_presence_slacks else 0
     total_changed = sum(changed_terms) if changed_terms else 0
     total_preserved = sum(preserved_terms) if preserved_terms else 0
     workload_spread = max_work_days - min_work_days if active_work_staff_indexes else 0
@@ -391,8 +421,18 @@ def run_optimization(request_data: Dict[str, Any]) -> Dict[str, Any]:
     # ----------------------------------------------------
     phase_results = []
 
+    # Phase 1: hard-business cleanliness before coverage.
+    # Missing routes are acceptable operationally (欠区/計画などで手動対応),
+    # but overfill / Sunday-rule leakage / hard-locked legacy skill conflicts
+    # should be minimized first.
     solver = new_solver()
-    model.Minimize(total_underfill)
+    severe_violation_score = (
+        total_illegal * 100000
+        + total_overfill * 80000
+        + total_manager_presence * 60000
+        + total_sunday_rule * 20000
+    )
+    model.Minimize(severe_violation_score)
     status = solver.Solve(model)
     if not is_solved(status):
         return {
@@ -401,30 +441,13 @@ def run_optimization(request_data: Dict[str, Any]) -> Dict[str, Any]:
             'status_code': solver.StatusName(status),
             'generationMode': generation_mode,
         }
-    best_underfill = int(solver.Value(total_underfill)) if slack_under else 0
-    phase_results.append({'phase': 'minimize_underfill', 'status': solver.StatusName(status), 'underfill': best_underfill})
-    model.Add(total_underfill == best_underfill)
-
-    solver = new_solver()
-    model.ClearObjective()
-    severe_violation_score = (
-        total_illegal * 100000
-        + total_overfill * 80000
-        + total_sunday_rule * 20000
-    )
-    model.Minimize(severe_violation_score)
-    status = solver.Solve(model)
-    if not is_solved(status):
-        return {
-            'status': 'error',
-            'message': 'Solver minimized underfill but could not optimize severe violations.',
-            'status_code': solver.StatusName(status),
-            'generationMode': generation_mode,
-        }
     best_severe = int(solver.Value(severe_violation_score))
     phase_results.append({'phase': 'minimize_severe_violations', 'status': solver.StatusName(status), 'score': best_severe})
     model.Add(severe_violation_score == best_severe)
 
+    # Phase 2: rest count and consecutive work rules are absolute operational
+    # priorities.  Prefer leaving a route missing over breaking required rest,
+    # overusing a person, or assigning out-of-pattern hiban/shukyu.
     solver = new_solver()
     model.ClearObjective()
     rest_violation_score = (
@@ -437,7 +460,7 @@ def run_optimization(request_data: Dict[str, Any]) -> Dict[str, Any]:
     if not is_solved(status):
         return {
             'status': 'error',
-            'message': 'Solver minimized coverage but could not optimize rest rules.',
+            'message': 'Solver minimized severe violations but could not optimize rest rules.',
             'status_code': solver.StatusName(status),
             'generationMode': generation_mode,
         }
@@ -445,6 +468,26 @@ def run_optimization(request_data: Dict[str, Any]) -> Dict[str, Any]:
     phase_results.append({'phase': 'minimize_rest_violations', 'status': solver.StatusName(status), 'score': best_rest})
     model.Add(rest_violation_score == best_rest)
 
+    # Phase 3: now reduce visible missing routes as much as possible.  Remaining
+    # underfill is handed back to the user for manual 欠区 / 計画 / no-assignment
+    # decisions; the solver must not invent 年休 or 欠区 placeholders.
+    solver = new_solver()
+    model.ClearObjective()
+    model.Minimize(total_underfill)
+    status = solver.Solve(model)
+    if not is_solved(status):
+        return {
+            'status': 'error',
+            'message': 'Solver kept rest rules but could not minimize missing routes.',
+            'status_code': solver.StatusName(status),
+            'generationMode': generation_mode,
+        }
+    best_underfill = int(solver.Value(total_underfill)) if slack_under else 0
+    phase_results.append({'phase': 'minimize_underfill', 'status': solver.StatusName(status), 'underfill': best_underfill})
+    model.Add(total_underfill == best_underfill)
+
+    # Phase 4: tie-break only.  Preserve existing cells and improve balance
+    # without changing the above priorities.
     solver = new_solver()
     model.ClearObjective()
     if generation_mode == 'repair':
@@ -465,7 +508,7 @@ def run_optimization(request_data: Dict[str, Any]) -> Dict[str, Any]:
     if not is_solved(status):
         return {
             'status': 'error',
-            'message': 'Solver found a valid coverage level but failed during final tie-breaking.',
+            'message': 'Solver found a valid priority level but failed during final tie-breaking.',
             'status_code': solver.StatusName(status),
             'generationMode': generation_mode,
         }
@@ -566,6 +609,7 @@ def run_optimization(request_data: Dict[str, Any]) -> Dict[str, Any]:
         'underfill': solver_value(total_underfill),
         'overfill': solver_value(total_overfill),
         'illegalAssignments': solver_value(total_illegal),
+        'managerPresenceViolations': solver_value(total_manager_presence),
         'sundayRuleViolations': solver_value(total_sunday_rule),
         'weeklyRestViolations': solver_value(total_weekly),
         'minOffViolations': solver_value(total_min_off),
