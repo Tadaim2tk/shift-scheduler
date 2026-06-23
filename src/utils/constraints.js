@@ -13,6 +13,13 @@ export class ShiftConstraints {
         return this.store?.state?.settings?.maxConsecutiveWork ?? 5;
     }
 
+    getMinimumOffDays(staff, daysInMonth) {
+        const maxConsecutive = this.getMaxConsecutive(staff);
+        if (maxConsecutive >= 7) return 0;
+        if (maxConsecutive >= 6) return Math.ceil(daysInMonth / 7);
+        return this.store?.state?.settings?.minOffPer4Weeks ?? 8;
+    }
+
     // Evaluate constraints for a specific staff member's schedule
     validateStaff(staffId, schedule, daysInMonth) {
         const issues = [];
@@ -24,8 +31,8 @@ export class ShiftConstraints {
         });
 
         const staffObj = (this.store.state.staff || []).find(s => String(s.id) === String(staffId));
-        const minOff = this.store?.state?.settings?.minOffPer4Weeks ?? 8;
         const maxConsecutive = this.getMaxConsecutive(staffObj);
+        const minOff = this.getMinimumOffDays(staffObj, daysInMonth);
 
         // 1. 4-Week minimum off days (default 4w8d off).
         const offCount = dayMap.filter(c => c && this.isOff(c.symbol)).length;

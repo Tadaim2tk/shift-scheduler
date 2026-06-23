@@ -55,6 +55,28 @@ export class Generator {
         return !!sym && sym !== '祝日' && !this.isOffSym(sym);
     }
 
+    getStaffMaxConsecutive(staff) {
+        const globalMax = this.store.state.settings?.maxConsecutiveWork ?? 5;
+        return staff?.attributes?.maxConsecutiveWork ?? globalMax;
+    }
+
+    requiresWeeklyShukyu(staff) {
+        return this.hasAnyOperationalCapability(staff) && this.getStaffMaxConsecutive(staff) < 7;
+    }
+
+    hasAnyOperationalCapability(staff) {
+        const allCaps = [
+            ...(staff?.capabilities || []),
+            ...(staff?.satCapabilities || []),
+            ...(staff?.sunCapabilities || [])
+        ];
+        return allCaps.some(routeId => this.store.state.routes.some(route => route.id === routeId));
+    }
+
+    isSoftMissingRouteId(routeId) {
+        return !!this.store.state.routes.find(route => route.id === routeId)?.softMissing;
+    }
+
     getCapabilities(staff, isSat, isSunOrHol) {
         const allStandardRoutes = [
             '1区', '2区', '3区', '4区', '5区', '6区', '7区', '8区', '9区', '10区', '11区', '12区', '13区',
@@ -352,7 +374,9 @@ export class Generator {
                 bestScore = score;
             }
 
-            if (score.missing === 0 &&
+            const softOnlyAfterCapacityIsUsed = score.softMissing === 0 || score.totalBlank === 0;
+            if (score.hardMissing === 0 &&
+                softOnlyAfterCapacityIsUsed &&
                 score.overage === 0 &&
                 score.invalidAssignments === 0 &&
                 score.holidayViolations === 0 &&
@@ -413,12 +437,17 @@ export class Generator {
             this.finalFillMissingRoutes(matrix, allStaff, targetStaff, dailySlots, startDay, endDay, yearMonth);
         }
         if (!this.isGenerationTimeUp()) {
+            this.sacrificeSoftRoutesForHardMissing(matrix, allStaff, targetStaff, dailySlots, startDay, endDay);
+        }
+        if (!this.isGenerationTimeUp()) {
             this.labelSurplusBlanks(matrix, allStaff, targetStaff, dailySlots, startDay, endDay, yearMonth);
         }
     }
 
     scoreMatrix(matrix, allStaff, targetStaff, dailySlots, startDay, endDay) {
-        const missing = this.totalRouteShortage(matrix, allStaff, dailySlots, startDay, endDay);
+        const hardMissing = this.totalRouteShortage(matrix, allStaff, dailySlots, startDay, endDay, { includeSoft: false });
+        const softMissing = this.totalRouteShortage(matrix, allStaff, dailySlots, startDay, endDay, { includeHard: false });
+        const missing = hardMissing + softMissing;
         const overage = this.totalRouteOverage(matrix, allStaff, dailySlots, startDay, endDay);
         let invalidAssignments = 0;
         let holidayViolations = 0;
@@ -453,6 +482,8 @@ export class Generator {
 
         return {
             missing,
+            hardMissing,
+            softMissing,
             overage,
             invalidAssignments,
             holidayViolations,
@@ -461,12 +492,13 @@ export class Generator {
             blankSquares,
             maxBlankPerDay,
             missingBlankConflict,
-            value: missing * 1000000 +
+            value: hardMissing * 1000000 +
                 overage * 1000000 +
                 invalidAssignments * 1000000 +
                 missingBlankConflict * 500000 +
                 hibanViolations * 50000 +
                 holidayViolations * 10000 +
+                softMissing * 3000 +
                 maxBlankPerDay * 5000 +
                 blankSquares * 50 +
                 totalBlank
@@ -699,12 +731,12 @@ export class Generator {
                 if (!cell.isSat && !cell.isSun) continue;
                 if (this.hasUsableRequiredRoute(s, cell, dailySlots[d] || [])) continue;
 
-                if (cell.isSun) {
+                if (cell.isSun && this.requiresWeeklyShukyu(s)) {
                     cell.symbol = '週休';
                     cell.type = 'OFF';
                     cell.fixed = true;
                     existingShukyuCount++;
-                } else if (cell.isSat) {
+                } else if (cell.isSat && this.requiresWeeklyHiban(s)) {
                     cell.symbol = '非番';
                     cell.type = 'OFF';
                     cell.fixed = true;
@@ -720,8 +752,8 @@ export class Generator {
                     if (cell.isHol || (!cell.isSat && !cell.isSun)) return false;
                     return this.hasUsableRequiredRoute(s, cell, dailySlots[d] || []);
                 });
-            let hibanRemaining = hasWeekendWorkOption ? Math.max(0, hibanTarget - existingHibanCount) : 0;
-            let shukyuRemaining = hasWeekendWorkOption ? Math.max(0, Math.round(periodLength / 7) - existingShukyuCount) : 0;
+            let hibanRemaining = (hasWeekendWorkOption && this.requiresWeeklyHiban(s)) ? Math.max(0, hibanTarget - existingHibanCount) : 0;
+            let shukyuRemaining = (hasWeekendWorkOption && this.requiresWeeklyShukyu(s)) ? Math.max(0, Math.round(periodLength / 7) - existingShukyuCount) : 0;
 
             for (let d = startDay; d <= endDay; d++) {
                 const cell = matrix[s.id][d];
@@ -754,8 +786,8 @@ export class Generator {
                 }
             }
 
-            // 1. Place exactly 1 週休 per calendar week
-            validWeeks.forEach(weekDays => {
+            // 1. Place exactly 1 週休 per calendar week for ordinary / 6-day staff.
+            if (this.requiresWeeklyShukyu(s)) validWeeks.forEach(weekDays => {
                 const firstDay = weekDays[0];
                 const date = new Date(y, m - 1, firstDay);
                 const dayOfWeek = date.getDay();
@@ -793,7 +825,7 @@ export class Generator {
             });
 
             // 2. Place exactly 'neededHiban' to break up any >5 day gaps between off days
-            let neededHiban = hasWeekendWorkOption ? Math.max(0, hibanTarget - existingHibanCount) : 0;
+            let neededHiban = (hasWeekendWorkOption && this.requiresWeeklyHiban(s)) ? Math.max(0, hibanTarget - existingHibanCount) : 0;
             for (let i = 0; i < neededHiban; i++) {
                 let offDays = [];
                 for (let d = startDay; d <= endDay; d++) {
@@ -861,7 +893,7 @@ export class Generator {
         const staff = this.store.state.staff.find(s => String(s.id) === String(staffId));
         const maxConsecutive = this.store.getMaxConsecutiveWork
             ? this.store.getMaxConsecutiveWork(staff)
-            : (this.store.state.settings?.maxConsecutiveWork ?? 5);
+            : this.getStaffMaxConsecutive(staff);
 
         // 1. Ensure maximum consecutive work does not exceed staff/global setting,
         // including already-generated adjacent months in the visible range.
@@ -884,16 +916,18 @@ export class Generator {
         }
 
         // 3. Ensure no more than 2 非番 between any 週休
-        let hibanCount = 0;
-        let seenShukyu = false;
-        for (let d = startDay; d <= endDay; d++) {
-            const sym = matrix[staffId][d].symbol;
-            if (sym === '週休') {
-                if (seenShukyu && hibanCount > 2) return false;
-                seenShukyu = true;
-                hibanCount = 0;
-            } else if (sym === '非番') {
-                hibanCount++;
+        if (this.requiresWeeklyHiban(staff)) {
+            let hibanCount = 0;
+            let seenShukyu = false;
+            for (let d = startDay; d <= endDay; d++) {
+                const sym = matrix[staffId][d].symbol;
+                if (sym === '週休') {
+                    if (seenShukyu && hibanCount > 2) return false;
+                    seenShukyu = true;
+                    hibanCount = 0;
+                } else if (sym === '非番') {
+                    hibanCount++;
+                }
             }
         }
 
@@ -1737,6 +1771,7 @@ export class Generator {
 
     requiresWeeklyHiban(staff) {
         if (!staff) return false;
+        if (this.getStaffMaxConsecutive(staff) >= 6) return false;
         const allCaps = [
             ...(staff.capabilities || []),
             ...(staff.satCapabilities || []),
@@ -1865,8 +1900,9 @@ export class Generator {
 
     chooseInsertedRestSymbol(matrix, staff, cell, yearMonth, day, startDay, endDay) {
         if (cell.isHol) return '祝日';
+        if (!this.requiresWeeklyShukyu(staff)) return null;
         if (!this.hasShukyuInWeek(matrix, staff.id, yearMonth, day, startDay, endDay)) return '週休';
-        return '非番';
+        return this.requiresWeeklyHiban(staff) ? '非番' : null;
     }
 
     findRestInsertionCandidates(matrix, staff, startDay, endDay) {
@@ -1917,6 +1953,7 @@ export class Generator {
 
                     const droppedRoute = cell.symbol;
                     const restSymbol = this.chooseInsertedRestSymbol(matrix, staff, cell, yearMonth, day, startDay, endDay);
+                    if (!restSymbol) continue;
                     if (restSymbol === '非番' &&
                         this.countHibanInWeek(matrix, staff.id, yearMonth, day, startDay, endDay) >= 2) {
                         continue;
@@ -1986,6 +2023,7 @@ export class Generator {
                         if (this.blankCount(matrix, targetStaff, item.day) <= targetMaxBlank) break;
                         const cell = matrix[staff.id][item.day];
                         const symbol = this.chooseInsertedRestSymbol(matrix, staff, cell, yearMonth, item.day, startDay, endDay);
+                        if (!symbol) continue;
 
                         if (symbol === '非番' &&
                             this.countHibanInWeek(matrix, staff.id, yearMonth, item.day, startDay, endDay) >= 2) {
@@ -2010,11 +2048,81 @@ export class Generator {
         }
     }
 
-    getMissingRouteSlots(matrix, allStaff, dailySlots, startDay, endDay) {
+    sacrificeSoftRoutesForHardMissing(matrix, allStaff, targetStaff, dailySlots, startDay, endDay) {
+        let changed = true;
+        let loops = 0;
+
+        while (changed && loops < 20 && !this.isGenerationTimeUp()) {
+            changed = false;
+            loops++;
+
+            const hardMissing = this.sortMissingSlots(
+                this.getMissingRouteSlots(matrix, allStaff, dailySlots, startDay, endDay, { includeSoft: false }),
+                matrix,
+                targetStaff,
+                dailySlots
+            );
+
+            for (const slot of hardMissing) {
+                if (this.isGenerationTimeUp()) break;
+                const req = dailySlots[slot.day]?.find(item => item.id === slot.routeId);
+                if (!req || this.countRoute(matrix, allStaff, slot.day, slot.routeId) >= req.count) continue;
+
+                // Soft 欠区 is only allowed after ordinary empty capacity on that
+                // day has already been exhausted. Until then, normal fill logic
+                // should keep trying to cover both hard and soft routes.
+                if (this.blankCount(matrix, targetStaff, slot.day) > 0) continue;
+
+                const candidates = targetStaff
+                    .filter(staff => {
+                        const cell = matrix[staff.id][slot.day];
+                        if (!cell || cell.locked) return false;
+                        if (!this.isSoftMissingRouteId(cell.symbol)) return false;
+                        if (!this.canWorkRoute(staff, cell, slot.routeId)) return false;
+                        if (this.wouldBreakIntervals(matrix, staff.id, slot.day, slot.routeId)) return false;
+                        return true;
+                    })
+                    .sort(this.assignmentComparator(slot.routeId, slot.day, matrix, dailySlots[slot.day] || [], targetStaff));
+
+                for (const staff of candidates) {
+                    const cell = matrix[staff.id][slot.day];
+                    const backup = { symbol: cell.symbol, type: cell.type, fixed: cell.fixed };
+                    const beforeHard = this.totalRouteShortage(matrix, allStaff, dailySlots, startDay, endDay, { includeSoft: false });
+
+                    cell.symbol = slot.routeId;
+                    cell.type = 'ROUTE';
+                    cell.fixed = false;
+
+                    const afterHard = this.totalRouteShortage(matrix, allStaff, dailySlots, startDay, endDay, { includeSoft: false });
+                    const valid = afterHard < beforeHard &&
+                        this.respectsMaxConsecutiveWork(matrix, staff.id, startDay, endDay) &&
+                        this.validateHolidayRules(matrix, staff.id, startDay, endDay) &&
+                        this.totalRouteOverage(matrix, allStaff, dailySlots, slot.day, slot.day) === 0;
+
+                    if (valid) {
+                        changed = true;
+                        break;
+                    }
+
+                    cell.symbol = backup.symbol;
+                    cell.type = backup.type;
+                    cell.fixed = backup.fixed;
+                }
+
+                if (changed) break;
+            }
+        }
+    }
+
+    getMissingRouteSlots(matrix, allStaff, dailySlots, startDay, endDay, options = {}) {
+        const includeHard = options.includeHard !== false;
+        const includeSoft = options.includeSoft !== false;
         const missing = [];
         for (let d = startDay; d <= endDay; d++) {
             if (!dailySlots[d]) continue;
             dailySlots[d].forEach(req => {
+                const isSoft = this.isSoftMissingRouteId(req.id);
+                if ((isSoft && !includeSoft) || (!isSoft && !includeHard)) return;
                 const shortage = req.count - this.countRoute(matrix, allStaff, d, req.id);
                 for (let i = 0; i < shortage; i++) missing.push({ day: d, routeId: req.id });
             });
@@ -2022,17 +2130,21 @@ export class Generator {
         return missing;
     }
 
-    dayRouteShortage(matrix, allStaff, dailySlots, day) {
+    dayRouteShortage(matrix, allStaff, dailySlots, day, options = {}) {
         if (!dailySlots[day]) return 0;
+        const includeHard = options.includeHard !== false;
+        const includeSoft = options.includeSoft !== false;
         return dailySlots[day].reduce((total, req) => {
+            const isSoft = this.isSoftMissingRouteId(req.id);
+            if ((isSoft && !includeSoft) || (!isSoft && !includeHard)) return total;
             return total + Math.max(0, req.count - this.countRoute(matrix, allStaff, day, req.id));
         }, 0);
     }
 
-    totalRouteShortage(matrix, allStaff, dailySlots, startDay, endDay) {
+    totalRouteShortage(matrix, allStaff, dailySlots, startDay, endDay, options = {}) {
         let total = 0;
         for (let d = startDay; d <= endDay; d++) {
-            total += this.dayRouteShortage(matrix, allStaff, dailySlots, d);
+            total += this.dayRouteShortage(matrix, allStaff, dailySlots, d, options);
         }
         return total;
     }

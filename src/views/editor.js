@@ -550,8 +550,11 @@ export class EditorView {
       // dominate, then fewer missing routes, then fewer disruptive changes.
       const qualityScore = (result) => {
         const m = result?.metrics || {};
+        const hardUnderfill = m.hardUnderfill ?? m.underfill ?? 0;
+        const softUnderfill = m.softUnderfill ?? 0;
         return hardViolationScore(result) * 1e4
-          + (m.underfill || 0) * 10;
+          + hardUnderfill * 1000
+          + softUnderfill * 10;
       };
 
       const resultCoversVisiblePeriod = (result, payload) => {
@@ -566,10 +569,12 @@ export class EditorView {
       const summarizeUnfilled = (result) => {
         const items = result?.unfilledRequirements || [];
         if (!items.length) return '';
-        const examples = items.slice(0, 12).map(item => {
+        const sorted = [...items].sort((a, b) => Number(a.softMissing === true) - Number(b.softMissing === true));
+        const examples = sorted.slice(0, 12).map(item => {
           const capable = item.capableStaff === 0 ? '担当可能者0人' : `担当可能者${item.capableStaff}人`;
           const lockedAway = item.lockedAwayCapableStaff ? ` / ロックで使用不可${item.lockedAwayCapableStaff}人` : '';
-          return `${item.date}: ${item.routeId} 不足${item.shortage} (${capable}${lockedAway})`;
+          const soft = item.softMissing ? ' / 不足OK' : '';
+          return `${item.date}: ${item.routeId} 不足${item.shortage} (${capable}${lockedAway}${soft})`;
         });
         const more = items.length > examples.length ? `\nほか ${items.length - examples.length} 件` : '';
         return `${examples.join('\n')}${more}`;
@@ -580,6 +585,8 @@ export class EditorView {
         const changed = result?.changedCells?.length ?? m.changedCells ?? 0;
         return [
           `欠員:${m.underfill ?? 0}`,
+          `硬い欠員:${m.hardUnderfill ?? m.underfill ?? 0}`,
+          `不足OK欠員:${m.softUnderfill ?? 0}`,
           `能力外:${m.illegalAssignments ?? 0}`,
           `重複/不要:${m.overfill ?? 0}`,
           `管理者不在(平日):${m.managerPresenceViolations ?? 0}`,
@@ -687,6 +694,8 @@ export class EditorView {
         const changed = best.result.changedCells?.length || 0;
         const usedRepair = best.mode === 'repair' && mode !== 'repair';
         const missing = best.result.metrics?.underfill || 0;
+        const hardMissing = best.result.metrics?.hardUnderfill ?? missing;
+        const softMissing = best.result.metrics?.softUnderfill ?? 0;
         const blankCount = Object.values(best.result.matrix || {}).reduce((acc, row) => (
           acc + Object.values(row).filter(cell => !cell.symbol || cell.symbol === '空き').length
         ), 0);
@@ -703,7 +712,10 @@ export class EditorView {
             notes.push(`空き枠固定では解けなかったため、自動リペアで既存配置を ${changed} 箇所だけ動かしました。\n変更例:\n${sample.join('\n')}${more}`);
           }
           if (missing > 0) {
-            notes.push(`人員不足のため未配置のままにした区が ${missing} 件あります。欠区/計画などの対応はこちらで手動で割り当ててください（自動では欠区にしていません）。\n\n${summarizeUnfilled(best.result)}`);
+            const missingNote = hardMissing === 0 && softMissing > 0
+              ? `通常担務は埋め切り、不足OKの担務だけ ${softMissing} 件を未配置にしました。`
+              : `人員不足のため未配置のままにした区が ${missing} 件あります（硬い欠員 ${hardMissing} / 不足OK ${softMissing}）。`;
+            notes.push(`${missingNote} 欠区/計画などの対応はこちらで手動で割り当ててください（自動では欠区にしていません）。\n\n${summarizeUnfilled(best.result)}`);
           }
           if (blankCount > 0) {
             notes.push(`空き（余剰）が ${blankCount} 人日あります。有休消化などで誰かを追加で休ませる場合は手動で割り当ててください（年休は自動付与していません）。`);
@@ -1018,7 +1030,7 @@ export class EditorView {
 
   getSolverResultIssues(result, payload) {
     const dateIndexes = Object.keys(payload.dateLabels || {}).sort((a, b) => Number(a) - Number(b));
-    const issues = { missing: 0, invalid: 0, streak: 0, hiban: 0 };
+    const issues = { missing: 0, softMissing: 0, invalid: 0, streak: 0, hiban: 0 };
     const staffById = new Map(this.store.state.staff.map(staff => [String(staff.id), staff]));
 
     dateIndexes.forEach(dayIndex => {
@@ -1037,7 +1049,10 @@ export class EditorView {
           const symbol = result.matrix[staffId]?.[dayIndex]?.symbol;
           if (this.solverSymbolCountsForRoute(symbol, route.id)) assigned++;
         });
-        if (assigned < required) issues.missing += required - assigned;
+        if (assigned < required) {
+          if (route.softMissing) issues.softMissing += required - assigned;
+          else issues.missing += required - assigned;
+        }
       });
 
       Object.keys(result.matrix || {}).forEach(staffId => {
@@ -1107,6 +1122,11 @@ export class EditorView {
   }
 
   solverRequiresWeeklyHiban(staff) {
+    const maxConsecutive = this.store.getMaxConsecutiveWork
+      ? this.store.getMaxConsecutiveWork(staff)
+      : (this.store.state.settings?.maxConsecutiveWork ?? 5);
+    if (maxConsecutive >= 6) return false;
+
     const allCaps = [
       ...(staff.capabilities || []),
       ...(staff.satCapabilities || []),

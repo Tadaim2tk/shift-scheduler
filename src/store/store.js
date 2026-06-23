@@ -121,7 +121,7 @@ export class Store {
             // 特・計画・夕方
             { id: '特早', name: '特早', required: { weekday: 1, sat: 1, sun: 1 } },
             { id: '特遅', name: '特遅', required: { weekday: 1, sat: 1, sun: 1 } },
-            { id: '計画', name: '計画', required: { weekday: 1, sat: 0, sun: 0 } },
+            { id: '計画', name: '計画', required: { weekday: 1, sat: 0, sun: 0 }, softMissing: true },
             { id: '夕方区分', name: '夕方区分', required: { weekday: 1, sat: 1, sun: 0 } },
             { id: '夕差立', name: '夕差立', required: { weekday: 1, sat: 0, sun: 0 } },
         ];
@@ -189,6 +189,9 @@ export class Store {
         this.state.routes.forEach(r => {
             if (typeof r.required === 'number') {
                 r.required = { weekday: r.required, sat: r.required, sun: r.required };
+            }
+            if (typeof r.softMissing === 'undefined') {
+                r.softMissing = r.id === '計画';
             }
         });
 
@@ -282,7 +285,7 @@ export class Store {
 
     // --- Dynamic Routes Management ---
     addRoute() {
-        const newRoute = { id: '新規担務', name: '新規担務', required: { weekday: 1, sat: 1, sun: 1 } };
+        const newRoute = { id: '新規担務', name: '新規担務', required: { weekday: 1, sat: 1, sun: 1 }, softMissing: false };
         this.state.routes.push(newRoute);
         this.save();
     }
@@ -294,6 +297,8 @@ export class Store {
                  this.state.routes[index].required = { weekday: 0, sat: 0, sun: 0 };
             }
             this.state.routes[index].required[subField] = parseInt(value) || 0;
+        } else if (field === 'softMissing' || field === 'isMultiple') {
+            this.state.routes[index][field] = Boolean(value);
         } else {
             this.state.routes[index][field] = value;
         }
