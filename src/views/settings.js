@@ -487,6 +487,8 @@ export class SettingsView {
     const plannedLeave = staff.attributes?.plannedLeaveRemaining ?? 0;
     const globalMaxConsecutive = this.store.state.settings?.maxConsecutiveWork ?? 5;
     const maxConsecutiveWork = staff.attributes?.maxConsecutiveWork ?? globalMaxConsecutive;
+    const limitSpecialDutyExternal = staff.attributes?.limitSpecialDutyExternal
+        ?? (staff.attributes?.group !== '内務班');
 
     const modal = this.container.querySelector('#cap-modal');
     const list = this.container.querySelector('#cap-modal-list');
@@ -540,6 +542,10 @@ export class SettingsView {
                         <label>連勤上限:</label>
                         <input type="number" id="input-max-consecutive" value="${maxConsecutiveWork}" style="width: 50px;" min="1" max="14" title="全体設定は${globalMaxConsecutive}日。違う値なら個人上書きになります。">
                     </div>
+                    <label style="display:flex; align-items:center; gap:4px; cursor:pointer; white-space:nowrap;" title="ONの社員は特早・特遅の合計を月9日までに制限します。">
+                        <input type="checkbox" id="input-limit-special-duty" ${limitSpecialDutyExternal ? 'checked' : ''}>
+                        特殊系統を9日以内に制限
+                    </label>
                 </div>
             </div>
             
@@ -592,6 +598,7 @@ export class SettingsView {
       const newMaxConsecutive = Number.isFinite(parsedMaxConsecutive) && parsedMaxConsecutive > 0
         ? parsedMaxConsecutive
         : globalMaxConsecutive;
+      const newLimitSpecialDutyExternal = list.querySelector('#input-limit-special-duty').checked;
 
       const newStaff = [...this.store.state.staff];
       const target = newStaff[this.currentStaffIdx];
@@ -604,6 +611,7 @@ export class SettingsView {
       target.attributes.type = newType;
       target.attributes.paidLeaveRemaining = newPaidLeave;
       target.attributes.plannedLeaveRemaining = newPlannedLeave;
+      target.attributes.limitSpecialDutyExternal = newLimitSpecialDutyExternal;
       if (newMaxConsecutive !== globalMaxConsecutive) {
         target.attributes.maxConsecutiveWork = newMaxConsecutive;
       } else {

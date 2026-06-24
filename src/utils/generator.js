@@ -77,6 +77,78 @@ export class Generator {
         return !!this.store.state.routes.find(route => route.id === routeId)?.softMissing;
     }
 
+    isSpecialDutyRouteId(routeId) {
+        return routeId === '特早' || routeId === '特遅';
+    }
+
+    getSpecialDutyExternalLimit() {
+        const raw = this.store.state.settings?.specialDutyExternalMaxDays;
+        const parsed = Number(raw);
+        return Number.isFinite(parsed) ? parsed : 9;
+    }
+
+    limitsSpecialDutyExternal(staff) {
+        return staff?.attributes?.limitSpecialDutyExternal === true;
+    }
+
+    countStoredSpecialDutyForMonth(staffId, yearMonth, generatedDates = new Set()) {
+        const monthSchedule = this.store.getSchedule
+            ? this.store.getSchedule(yearMonth)
+            : (this.store.state.schedule?.[yearMonth] || {});
+        const row = monthSchedule?.[staffId] || monthSchedule?.[String(staffId)] || {};
+        return Object.entries(row).reduce((count, [day, cell]) => {
+            const dateStr = `${yearMonth}-${String(day).padStart(2, '0')}`;
+            if (generatedDates.has(dateStr)) return count;
+            return count + (this.isSpecialDutyRouteId(cell?.symbol) ? 1 : 0);
+        }, 0);
+    }
+
+    countSpecialDutyLimitViolations(matrix, staffId, startDay, endDay) {
+        const staff = this.store.state.staff.find(s => String(s.id) === String(staffId));
+        if (!this.limitsSpecialDutyExternal(staff)) return 0;
+
+        const limit = Math.max(0, this.getSpecialDutyExternalLimit());
+        const generatedDates = new Set();
+        const generatedByMonth = new Map();
+
+        for (let d = startDay; d <= endDay; d++) {
+            const cell = matrix[staffId]?.[d];
+            if (!cell?.dateStr) continue;
+            const monthKey = cell.dateStr.slice(0, 7);
+            generatedDates.add(cell.dateStr);
+            if (!generatedByMonth.has(monthKey)) generatedByMonth.set(monthKey, 0);
+            if (this.isSpecialDutyRouteId(cell.symbol)) {
+                generatedByMonth.set(monthKey, generatedByMonth.get(monthKey) + 1);
+            }
+        }
+
+        let violations = 0;
+        generatedByMonth.forEach((generatedCount, monthKey) => {
+            const contextCount = this.countStoredSpecialDutyForMonth(staffId, monthKey, generatedDates);
+            const allowedGenerated = Math.max(0, limit - contextCount);
+            violations += Math.max(0, generatedCount - allowedGenerated);
+        });
+        return violations;
+    }
+
+    respectsSpecialDutyLimit(matrix, staffId, startDay, endDay) {
+        return this.countSpecialDutyLimitViolations(matrix, staffId, startDay, endDay) === 0;
+    }
+
+    wouldExceedSpecialDutyLimit(matrix, staff, day, routeId, startDay, endDay) {
+        if (!this.isSpecialDutyRouteId(routeId) || !this.limitsSpecialDutyExternal(staff)) return false;
+        const cell = matrix[staff.id]?.[day];
+        if (!cell) return false;
+
+        const backup = { symbol: cell.symbol, type: cell.type };
+        cell.symbol = routeId;
+        cell.type = 'ROUTE';
+        const exceeds = !this.respectsSpecialDutyLimit(matrix, staff.id, startDay, endDay);
+        cell.symbol = backup.symbol;
+        cell.type = backup.type;
+        return exceeds;
+    }
+
     getCapabilities(staff, isSat, isSunOrHol) {
         const allStandardRoutes = [
             '1区', '2区', '3区', '4区', '5区', '6区', '7区', '8区', '9区', '10区', '11区', '12区', '13区',
@@ -379,6 +451,7 @@ export class Generator {
                 softOnlyAfterCapacityIsUsed &&
                 score.overage === 0 &&
                 score.invalidAssignments === 0 &&
+                score.specialDutyLimitViolations === 0 &&
                 score.holidayViolations === 0 &&
                 score.hibanViolations === 0 &&
                 score.maxBlankPerDay <= 2) {
@@ -452,6 +525,7 @@ export class Generator {
         let invalidAssignments = 0;
         let holidayViolations = 0;
         let hibanViolations = 0;
+        let specialDutyLimitViolations = 0;
         let totalBlank = 0;
         let blankSquares = 0;
         let maxBlankPerDay = 0;
@@ -476,6 +550,7 @@ export class Generator {
         }
 
         targetStaff.forEach(staff => {
+            specialDutyLimitViolations += this.countSpecialDutyLimitViolations(matrix, staff.id, startDay, endDay);
             if (!this.validateHolidayRules(matrix, staff.id, startDay, endDay)) holidayViolations++;
             hibanViolations += this.countHibanCoverageViolations(matrix, staff.id, startDay, endDay);
         });
@@ -488,6 +563,7 @@ export class Generator {
             invalidAssignments,
             holidayViolations,
             hibanViolations,
+            specialDutyLimitViolations,
             totalBlank,
             blankSquares,
             maxBlankPerDay,
@@ -495,6 +571,7 @@ export class Generator {
             value: hardMissing * 1000000 +
                 overage * 1000000 +
                 invalidAssignments * 1000000 +
+                specialDutyLimitViolations * 800000 +
                 missingBlankConflict * 500000 +
                 hibanViolations * 50000 +
                 holidayViolations * 10000 +
@@ -569,6 +646,7 @@ export class Generator {
                         if (filled >= slotReq.count) return;
 
                         if (this.wouldBreakIntervals(matrix, s.id, d, capRoute)) return;
+                        if (this.wouldExceedSpecialDutyLimit(matrix, s, d, capRoute, startDay, endDay)) return;
 
                         possible.push(capRoute);
                     });
@@ -636,6 +714,7 @@ export class Generator {
                         if (cell.symbol && cell.symbol !== '祝日') return false;
                         if (!this.canWorkRoute(s, cell, req.id)) return false;
                         if (this.wouldBreakIntervals(matrix, s.id, d, req.id)) return false;
+                        if (this.wouldExceedSpecialDutyLimit(matrix, s, d, req.id, startDay, endDay)) return false;
                         const usableToday = this.getUsableCapabilityCount(s, cell, dailySlots[d]);
                         const totalToday = this.getCapabilities(s, cell.isSat, cell.isSunOrHol).length;
                         return usableToday === 1 || totalToday === 1;
@@ -898,6 +977,7 @@ export class Generator {
         // 1. Ensure maximum consecutive work does not exceed staff/global setting,
         // including already-generated adjacent months in the visible range.
         if (!this.respectsMaxConsecutiveWork(matrix, staffId, startDay, endDay)) return false;
+        if (!this.respectsSpecialDutyLimit(matrix, staffId, startDay, endDay)) return false;
 
         // 2. Ensure the mathematical foundation of Off Days protects against over-limit streaks.
         let offDays = [];
@@ -1147,7 +1227,8 @@ export class Generator {
     validateRoutePath(matrix, path, startDay, endDay) {
         const staffIds = new Set(path.map(move => move.staff.id));
         return [...staffIds].every(staffId => (
-            this.respectsMaxConsecutiveWork(matrix, staffId, startDay, endDay)
+            this.respectsMaxConsecutiveWork(matrix, staffId, startDay, endDay) &&
+            this.respectsSpecialDutyLimit(matrix, staffId, startDay, endDay)
         ));
     }
 
@@ -1241,7 +1322,7 @@ export class Generator {
                     const backup = { symbol: cell.symbol, type: cell.type };
                     cell.symbol = req.routeId;
                     cell.type = 'ROUTE';
-                    const valid = this.respectsMaxConsecutiveWork(matrix, staff.id, startDay, endDay);
+                    const valid = this.validateHolidayRules(matrix, staff.id, startDay, endDay);
                     cell.symbol = backup.symbol;
                     cell.type = backup.type;
                     return valid;
@@ -1295,7 +1376,8 @@ export class Generator {
 
         const changedStaffIds = new Set(movable.map(staff => String(staff.id)));
         const valid = [...changedStaffIds].every(staffId => (
-            this.respectsMaxConsecutiveWork(matrix, staffId, startDay, endDay)
+            this.respectsMaxConsecutiveWork(matrix, staffId, startDay, endDay) &&
+            this.respectsSpecialDutyLimit(matrix, staffId, startDay, endDay)
         ));
         const newShortage = this.dayRouteShortage(matrix, allStaff, dailySlots, day);
         const newOverage = this.totalRouteOverage(matrix, allStaff, dailySlots, day, day);
@@ -1666,7 +1748,7 @@ export class Generator {
                             const backupType = c.type;
                             c.symbol = routeId;
                             c.type = 'ROUTE';
-                            const valid = this.respectsMaxConsecutiveWork(matrix, s.id, startDay, endDay);
+                            const valid = this.validateHolidayRules(matrix, s.id, startDay, endDay);
                             c.symbol = backupSym;
                             c.type = backupType;
                             return valid;

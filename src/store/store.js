@@ -5,8 +5,10 @@ export class Store {
     }
 
     getInitialState() {
+        const staff = this.getInitialStaff();
+        this.applySpecialDutyLimitDefaultsToList(staff);
         return {
-            staff: this.getInitialStaff(),
+            staff,
             routes: this.getInitialRoutes(),
             symbols: this.getInitialSymbols(),
             schedule: {},
@@ -15,7 +17,8 @@ export class Store {
                 // constraints.js(JS検証) はこの値を参照する。
                 maxConsecutiveWork: 5,   // 連続勤務の上限日数（これを超える連勤を禁止）
                 weeklyShukyu: 1,         // 1週あたりの週休数
-                minOffPer4Weeks: 8       // 4週あたりの最低休日数(4週8休)
+                minOffPer4Weeks: 8,      // 4週あたりの最低休日数(4週8休)
+                specialDutyExternalMaxDays: 9 // 外務扱いを維持する特早/特遅の月上限
             },
             daySettings: {} // { YM: { day: { extraRoutes: [] } } }
         };
@@ -283,6 +286,19 @@ export class Store {
         });
     }
 
+    shouldDefaultSpecialDutyLimit(staff) {
+        return (staff?.attributes?.group || '') !== '内務班';
+    }
+
+    applySpecialDutyLimitDefaultsToList(staffList) {
+        staffList.forEach(staff => {
+            if (!staff.attributes) staff.attributes = {};
+            if (typeof staff.attributes.limitSpecialDutyExternal === 'undefined') {
+                staff.attributes.limitSpecialDutyExternal = this.shouldDefaultSpecialDutyLimit(staff);
+            }
+        });
+    }
+
     applyRouteDefaultsAndOrder() {
         const defaultRoutes = this.getInitialRoutes();
         const defaultRouteIds = defaultRoutes.map(r => r.id);
@@ -419,6 +435,8 @@ export class Store {
     }
 
     ensureDefaults() {
+        if (!this.state.settings) this.state.settings = {};
+
         // Re-inject defaults if missing
         const defaults = [
             { symbol: '週休', canonical: 'OFF', type: 'OFF', color: '#ffaaaa' },
@@ -458,6 +476,15 @@ export class Store {
         if (this.state.reserveDefaultsVersion !== reserveDefaultsVersion) {
             this.applyReserveRouteDefaults();
             this.state.reserveDefaultsVersion = reserveDefaultsVersion;
+        }
+
+        const specialDutyLimitVersion = 'special-duty-external-limit-2026-06-24';
+        if (this.state.specialDutyLimitVersion !== specialDutyLimitVersion) {
+            this.applySpecialDutyLimitDefaultsToList(this.state.staff);
+            this.state.specialDutyLimitVersion = specialDutyLimitVersion;
+        }
+        if (typeof this.state.settings.specialDutyExternalMaxDays === 'undefined') {
+            this.state.settings.specialDutyExternalMaxDays = 9;
         }
         this.save();
     }
