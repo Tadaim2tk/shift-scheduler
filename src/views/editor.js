@@ -533,13 +533,15 @@ export class EditorView {
       // Lower score = better schedule.  Coverage is most important, then hard
       // business violations, then rest-rule softness.
       // Hard operational rules first (must never be sacrificed for coverage):
-      // capability, no duplicates, rest-day counts, and consecutive-work limits.
+      // capability, no duplicates, special-duty monthly caps, rest-day counts,
+      // and consecutive-work limits.
       // Missing routes (欠区) are intentionally the lowest priority because the
       // user fills shortages manually.
       const hardViolationScore = (result) => {
         const m = result?.metrics || {};
         return (m.illegalAssignments || 0) * 1e6
           + (m.overfill || 0) * 1e5
+          + (m.specialDutyLimitViolations || 0) * 8e4
           + (m.managerPresenceViolations || 0) * 1e4
           + (m.weeklyRestViolations || 0) * 1e3
           + (m.minOffViolations || 0) * 1e2
@@ -589,6 +591,7 @@ export class EditorView {
           `不足OK欠員:${m.softUnderfill ?? 0}`,
           `能力外:${m.illegalAssignments ?? 0}`,
           `重複/不要:${m.overfill ?? 0}`,
+          `特殊上限:${m.specialDutyLimitViolations ?? 0}`,
           `管理者不在(平日):${m.managerPresenceViolations ?? 0}`,
           `週休非番違反:${m.weeklyRestViolations ?? 0}`,
           `連勤違反:${m.consecutiveViolations ?? 0}`,
@@ -701,7 +704,7 @@ export class EditorView {
         ), 0);
 
         if (hardViolationScore(best.result) === 0) {
-          // All absolute rules (休み数 / 連勤 / 能力 / 重複) are satisfied.
+          // All absolute rules (休み数 / 連勤 / 能力 / 重複 / 特殊上限) are satisfied.
           // Missing routes and idle (空き) are intentionally left for the
           // planner to resolve manually (欠区・計画・有休). The solver never
           // auto-assigns 年休 or fabricates 欠区 placeholders.
@@ -721,7 +724,7 @@ export class EditorView {
             notes.push(`空き（余剰）が ${blankCount} 人日あります。有休消化などで誰かを追加で休ませる場合は手動で割り当ててください（年休は自動付与していません）。`);
           }
           const head = (missing > 0 || blankCount > 0)
-            ? '生成しました（休み・連勤・能力・重複・平日管理者の違反は0です）。'
+            ? '生成しました（休み・連勤・能力・重複・特殊上限・平日管理者の違反は0です）。'
             : '生成しました（欠員・空きなし、違反なし）。';
           if (notes.length || missing > 0 || blankCount > 0) {
             alert(`${head}\n${summarizeMetrics(best.result)}${notes.length ? '\n\n' + notes.join('\n\n') : ''}`);
@@ -730,7 +733,7 @@ export class EditorView {
           // A hard rule could not be satisfied — almost always because of
           // conflicting locked cells or fixed leave.
           const body = [
-            'ベストな結果を反映しましたが、絶対ルール（休み数・連勤・能力・重複・平日の課長代理以上の配置）に違反が残っています。',
+            'ベストな結果を反映しましたが、絶対ルール（休み数・連勤・能力・重複・特殊上限・平日の課長代理以上の配置）に違反が残っています。',
             summarizeMetrics(best.result),
             '\nこれは通常、ロック（鍵マーク）や固定休が矛盾しているときに起きます。該当セルのロックを外して「自動リペア」を再実行してください。',
           ];

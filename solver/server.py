@@ -21,6 +21,8 @@ class SolveRequest(BaseModel):
     routes: List[Dict[str, Any]]
     daySettings: Optional[Dict[str, Any]] = {}
     currentSchedule: Dict[str, Any]
+    contextSchedule: Optional[Dict[str, Any]] = {}
+    monthlyContextSchedule: Optional[Dict[str, Any]] = {}
     dateLabels: Dict[str, Any] = {}
     settings: Optional[Dict[str, Any]] = {}
     generationMode: Optional[str] = "fill"
