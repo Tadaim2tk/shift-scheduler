@@ -9,18 +9,15 @@ export class SolverAPI {
         const dateLabels = {};
         const flatSchedule = {}; // s_id -> { "1": {"symbol": "...", "locked": ...} }
         const contextSchedule = {}; // s_id -> { "YYYY-MM-DD": {"symbol": "..."} }
-        const monthlyContextSchedule = {}; // s_id -> { "YYYY-MM-DD": {"symbol": "..."} } for same-month limits
         const maxContextDays = Math.max(
             store.state.settings?.maxConsecutiveWork ?? 5,
             ...store.state.staff.map(s => s.attributes?.maxConsecutiveWork ?? 0)
         );
-        const generatedDateSet = new Set(flatDates);
         
         // Build empty mapping
         store.state.staff.forEach(s => {
             flatSchedule[s.id] = {};
             contextSchedule[s.id] = {};
-            monthlyContextSchedule[s.id] = {};
         });
 
         const addDays = (dateStr, offset) => {
@@ -45,32 +42,9 @@ export class SolverAPI {
             });
         };
 
-        const captureMonthlyContext = (ym) => {
-            const [y, m] = ym.split('-').map(Number);
-            const daysInMonth = new Date(y, m, 0).getDate();
-            const monthSch = store.getSchedule(ym);
-            for (let day = 1; day <= daysInMonth; day++) {
-                const dateStr = `${ym}-${String(day).padStart(2, '0')}`;
-                if (generatedDateSet.has(dateStr)) continue;
-                const d = String(day).padStart(2, '0');
-                store.state.staff.forEach(s => {
-                    const cell = monthSch?.[s.id]?.[d];
-                    if (cell && cell.symbol) {
-                        monthlyContextSchedule[s.id][dateStr] = {
-                            symbol: cell.symbol,
-                            type: cell.type,
-                            locked: Boolean(cell.locked)
-                        };
-                    }
-                });
-            }
-        };
-
         if (flatDates.length > 0) {
             const firstDate = flatDates[0];
             const lastDate = flatDates[flatDates.length - 1];
-            const touchedMonths = new Set(flatDates.map(dateStr => dateStr.slice(0, 7)));
-            touchedMonths.forEach(captureMonthlyContext);
             for (let offset = -maxContextDays; offset < 0; offset++) {
                 captureContextDate(addDays(firstDate, offset));
             }
@@ -117,7 +91,6 @@ export class SolverAPI {
             settings: store.state.settings || {},
             currentSchedule: flatSchedule,
             contextSchedule,
-            monthlyContextSchedule,
             dateLabels: dateLabels
         };
     }

@@ -542,7 +542,7 @@ export class SettingsView {
                         <label>連勤上限:</label>
                         <input type="number" id="input-max-consecutive" value="${maxConsecutiveWork}" style="width: 50px;" min="1" max="14" title="全体設定は${globalMaxConsecutive}日。違う値なら個人上書きになります。">
                     </div>
-                    <label style="display:flex; align-items:center; gap:4px; cursor:pointer; white-space:nowrap;" title="ONの社員は特早・特遅の合計を月9日までに制限します。">
+                    <label style="display:flex; align-items:center; gap:4px; cursor:pointer; white-space:nowrap;" title="ONの社員は特早・特遅の合計を表示中の生成期間で9日までに制限します。">
                         <input type="checkbox" id="input-limit-special-duty" ${limitSpecialDutyExternal ? 'checked' : ''}>
                         特殊系統を9日以内に制限
                     </label>

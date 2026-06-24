@@ -18,7 +18,7 @@ export class Store {
                 maxConsecutiveWork: 5,   // 連続勤務の上限日数（これを超える連勤を禁止）
                 weeklyShukyu: 1,         // 1週あたりの週休数
                 minOffPer4Weeks: 8,      // 4週あたりの最低休日数(4週8休)
-                specialDutyExternalMaxDays: 9 // 外務扱いを維持する特早/特遅の月上限
+                specialDutyExternalMaxDays: 9 // 外務扱いを維持する特早/特遅の生成期間上限
             },
             daySettings: {} // { YM: { day: { extraRoutes: [] } } }
         };

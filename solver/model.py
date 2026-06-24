@@ -10,7 +10,6 @@ def run_optimization(request_data: Dict[str, Any]) -> Dict[str, Any]:
     days_in_month = int(request_data.get('daysInMonth', 28))
     current_schedule = request_data.get('currentSchedule', {}) or {}
     context_schedule = request_data.get('contextSchedule', {}) or {}
-    monthly_context_schedule = request_data.get('monthlyContextSchedule', {}) or {}
     date_labels = request_data.get('dateLabels', {}) or {}
     settings = request_data.get('settings', {}) or {}
     generation_mode = request_data.get('generationMode', 'fill') or 'fill'
@@ -394,44 +393,25 @@ def run_optimization(request_data: Dict[str, Any]) -> Dict[str, Any]:
             manager_presence_slacks.append(presence_under)
 
     # Special duties 特早/特遅 are internal-work classifications.  For staff
-    # marked as external-limited, keep the monthly count at 9 or less.  Saved
-    # cells outside the generated range in the same calendar month are counted
-    # as fixed context.
+    # marked as external-limited, keep the count within the generated shift
+    # period at 9 or less.  The operational "month" here is the displayed
+    # 4-week shift period, not the calendar month; otherwise a range such as
+    # 7/12-8/8 would incorrectly allow 9 July + 9 August special duties.
     special_duty_limit_slacks = []
     special_routes_in_model = [r_id for r_id in route_ids if r_id in SPECIAL_DUTY_ROUTES]
-    days_by_month = {}
-    for d, meta in day_meta.items():
-        original_date = meta.get('originalDate')
-        if original_date:
-            days_by_month.setdefault(original_date[:7], []).append(d)
 
     if special_routes_in_model and SPECIAL_DUTY_EXTERNAL_MAX >= 0:
-        generated_dates = {
-            meta.get('originalDate')
-            for meta in day_meta.values()
-            if meta.get('originalDate')
-        }
         for s_idx, staff in enumerate(staff_list):
             if not limits_special_duty_external(staff):
                 continue
-            staff_context = monthly_context_schedule.get(str(staff.get('id')), {}) or {}
-            for month_key, month_days in days_by_month.items():
-                context_count = sum(
-                    1
-                    for date_str, cell in staff_context.items()
-                    if date_str.startswith(month_key)
-                    and date_str not in generated_dates
-                    and (cell or {}).get('symbol') in SPECIAL_DUTY_ROUTES
-                )
-                generated_count = sum(
-                    x[(s_idx, d, r_id)]
-                    for d in month_days
-                    for r_id in special_routes_in_model
-                )
-                safe_month_key = month_key.replace('-', '_')
-                limit_over = model.NewIntVar(0, days_in_month + context_count, f'special_limit_over_{s_idx}_{safe_month_key}')
-                model.Add(context_count + generated_count <= SPECIAL_DUTY_EXTERNAL_MAX + limit_over)
-                special_duty_limit_slacks.append(limit_over)
+            generated_count = sum(
+                x[(s_idx, d, r_id)]
+                for d in days
+                for r_id in special_routes_in_model
+            )
+            limit_over = model.NewIntVar(0, days_in_month, f'special_limit_over_{s_idx}')
+            model.Add(generated_count <= SPECIAL_DUTY_EXTERNAL_MAX + limit_over)
+            special_duty_limit_slacks.append(limit_over)
 
     # Existing schedule preservation for repair/full modes.  This is the key
     # difference from hard-locking every existing cell: the solver may move a

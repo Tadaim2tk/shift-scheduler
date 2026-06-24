@@ -91,44 +91,33 @@ export class Generator {
         return staff?.attributes?.limitSpecialDutyExternal === true;
     }
 
-    countStoredSpecialDutyForMonth(staffId, yearMonth, generatedDates = new Set()) {
-        const monthSchedule = this.store.getSchedule
-            ? this.store.getSchedule(yearMonth)
-            : (this.store.state.schedule?.[yearMonth] || {});
-        const row = monthSchedule?.[staffId] || monthSchedule?.[String(staffId)] || {};
-        return Object.entries(row).reduce((count, [day, cell]) => {
-            const dateStr = `${yearMonth}-${String(day).padStart(2, '0')}`;
-            if (generatedDates.has(dateStr)) return count;
-            return count + (this.isSpecialDutyRouteId(cell?.symbol) ? 1 : 0);
-        }, 0);
-    }
-
     countSpecialDutyLimitViolations(matrix, staffId, startDay, endDay) {
         const staff = this.store.state.staff.find(s => String(s.id) === String(staffId));
         if (!this.limitsSpecialDutyExternal(staff)) return 0;
 
         const limit = Math.max(0, this.getSpecialDutyExternalLimit());
+        const activePeriodDates = this.specialDutyPeriodDates instanceof Set ? this.specialDutyPeriodDates : null;
         const generatedDates = new Set();
-        const generatedByMonth = new Map();
+        const periodDates = activePeriodDates && activePeriodDates.size > 0 ? new Set(activePeriodDates) : new Set();
+        let generatedCount = 0;
 
         for (let d = startDay; d <= endDay; d++) {
             const cell = matrix[staffId]?.[d];
             if (!cell?.dateStr) continue;
-            const monthKey = cell.dateStr.slice(0, 7);
             generatedDates.add(cell.dateStr);
-            if (!generatedByMonth.has(monthKey)) generatedByMonth.set(monthKey, 0);
+            periodDates.add(cell.dateStr);
             if (this.isSpecialDutyRouteId(cell.symbol)) {
-                generatedByMonth.set(monthKey, generatedByMonth.get(monthKey) + 1);
+                generatedCount++;
             }
         }
 
-        let violations = 0;
-        generatedByMonth.forEach((generatedCount, monthKey) => {
-            const contextCount = this.countStoredSpecialDutyForMonth(staffId, monthKey, generatedDates);
-            const allowedGenerated = Math.max(0, limit - contextCount);
-            violations += Math.max(0, generatedCount - allowedGenerated);
+        let storedCount = 0;
+        periodDates.forEach(dateStr => {
+            if (generatedDates.has(dateStr)) return;
+            if (this.isSpecialDutyRouteId(this.getScheduleSym(staffId, dateStr))) storedCount++;
         });
-        return violations;
+
+        return Math.max(0, generatedCount + storedCount - limit);
     }
 
     respectsSpecialDutyLimit(matrix, staffId, startDay, endDay) {
@@ -412,7 +401,14 @@ export class Generator {
     // MAIN GENERATOR PIPELINE (SUDOKU APPROACH)
     // ==========================================
     generate(yearMonth, options = {}) {
-        const { clearUnlocked = true, startDay = 1, endDay = 31, timeBudgetMs = 12000, attempts = 10 } = options;
+        const {
+            clearUnlocked = true,
+            startDay = 1,
+            endDay = 31,
+            timeBudgetMs = 12000,
+            attempts = 10,
+            specialDutyPeriodDates = null
+        } = options;
         const state = this.store.state;
         const daysInMonth = this.getDaysInMonth(yearMonth);
         const allStaff = state.staff;
@@ -431,32 +427,38 @@ export class Generator {
         const totalDeadline = Date.now() + timeBudgetMs;
         let bestMatrix = null;
         let bestScore = null;
+        const previousSpecialDutyPeriodDates = this.specialDutyPeriodDates;
+        this.specialDutyPeriodDates = specialDutyPeriodDates ? new Set(specialDutyPeriodDates) : null;
 
-        for (let attempt = 0; attempt < attempts && Date.now() < totalDeadline; attempt++) {
-            const remainingAttempts = attempts - attempt;
-            const remainingMs = Math.max(500, totalDeadline - Date.now());
-            this.generationDeadline = Date.now() + Math.max(500, Math.floor(remainingMs / remainingAttempts));
+        try {
+            for (let attempt = 0; attempt < attempts && Date.now() < totalDeadline; attempt++) {
+                const remainingAttempts = attempts - attempt;
+                const remainingMs = Math.max(500, totalDeadline - Date.now());
+                this.generationDeadline = Date.now() + Math.max(500, Math.floor(remainingMs / remainingAttempts));
 
-            const matrix = this.buildInitialMatrix(yearMonth, daysInMonth, allStaff, baseSchedule, clearUnlocked);
-            this.runGenerationPipeline(matrix, allStaff, targetStaff, dailySlots, startDay, endDay, yearMonth);
-            const score = this.scoreMatrix(matrix, allStaff, targetStaff, dailySlots, startDay, endDay);
+                const matrix = this.buildInitialMatrix(yearMonth, daysInMonth, allStaff, baseSchedule, clearUnlocked);
+                this.runGenerationPipeline(matrix, allStaff, targetStaff, dailySlots, startDay, endDay, yearMonth);
+                const score = this.scoreMatrix(matrix, allStaff, targetStaff, dailySlots, startDay, endDay);
 
-            if (!bestScore || score.value < bestScore.value) {
-                bestMatrix = matrix;
-                bestScore = score;
+                if (!bestScore || score.value < bestScore.value) {
+                    bestMatrix = matrix;
+                    bestScore = score;
+                }
+
+                const softOnlyAfterCapacityIsUsed = score.softMissing === 0 || score.totalBlank === 0;
+                if (score.hardMissing === 0 &&
+                    softOnlyAfterCapacityIsUsed &&
+                    score.overage === 0 &&
+                    score.invalidAssignments === 0 &&
+                    score.specialDutyLimitViolations === 0 &&
+                    score.holidayViolations === 0 &&
+                    score.hibanViolations === 0 &&
+                    score.maxBlankPerDay <= 2) {
+                    break;
+                }
             }
-
-            const softOnlyAfterCapacityIsUsed = score.softMissing === 0 || score.totalBlank === 0;
-            if (score.hardMissing === 0 &&
-                softOnlyAfterCapacityIsUsed &&
-                score.overage === 0 &&
-                score.invalidAssignments === 0 &&
-                score.specialDutyLimitViolations === 0 &&
-                score.holidayViolations === 0 &&
-                score.hibanViolations === 0 &&
-                score.maxBlankPerDay <= 2) {
-                break;
-            }
+        } finally {
+            this.specialDutyPeriodDates = previousSpecialDutyPeriodDates;
         }
 
         this.generationDeadline = 0;
