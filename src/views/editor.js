@@ -646,13 +646,20 @@ export class EditorView {
 
       const runJsFallback = () => {
         btn.innerText = '自動入力中...';
+        const specialDutyPeriodDates = [];
+        ranges.forEach(range => {
+          for (let d = range.startDay; d <= range.endDay; d++) {
+            specialDutyPeriodDates.push(`${range.ym}-${String(d).padStart(2, '0')}`);
+          }
+        });
         ranges.forEach(range => {
           this.generator.generate(range.ym, {
             clearUnlocked: mode !== 'fill',
             startDay: range.startDay,
             endDay: range.endDay,
             timeBudgetMs: 12000,
-            attempts: 10
+            attempts: 10,
+            specialDutyPeriodDates
           });
         });
         this.normalizeVisibleWeeklyHiban();
