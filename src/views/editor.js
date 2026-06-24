@@ -1213,7 +1213,10 @@ export class EditorView {
       const weekDates = dates.filter(item => item.date >= weekStart && item.date <= weekEnd);
       if (weekDates.length >= 4) {
         const hibanInWeek = weekDates.filter(item => row?.[item.dayIndex]?.symbol === '非番').length;
+        const shukyuInWeek = weekDates.filter(item => row?.[item.dayIndex]?.symbol === '週休').length;
+        const regularRestInWeek = shukyuInWeek + hibanInWeek;
         if (hibanInWeek >= 3) violations++;
+        if (regularRestInWeek >= 3) violations++;
 
         const nearStart = new Date(weekStart);
         nearStart.setDate(weekStart.getDate() - 3);
