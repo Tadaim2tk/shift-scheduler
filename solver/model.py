@@ -315,6 +315,22 @@ def run_optimization(request_data: Dict[str, Any]) -> Dict[str, Any]:
                     model.Add(hiban_week_count <= 2 + hiban_week_over)
                     weekly_rule_slacks.append(hiban_week_over)
 
+                if requires_weekly_hiban(staff) or staff_max_consecutive(staff) >= 6:
+                    # 祝日は週休でも非番でもない別枠の休み。通常休み
+                    # (週休+非番) は同じ週に積み上げすぎない。
+                    regular_rest_cap = weekly_shukyu + (1 if requires_weekly_hiban(staff) else 0)
+                    regular_rest_over = model.NewIntVar(0, len(week_days), f'regular_rest_over_{s_idx}_{week_days[0]}')
+                    model.Add(
+                        shukyu_count + sum(x[(s_idx, d, '非番')] for d in week_days)
+                        <= regular_rest_cap + regular_rest_over
+                    )
+                    weekly_rule_slacks.append(regular_rest_over)
+        else:
+            shukyu_total = sum(x[(s_idx, d, '週休')] for d in days)
+            shukyu_total_over = model.NewIntVar(0, days_in_month, f'shukyu_total_over_{s_idx}')
+            model.Add(shukyu_total <= shukyu_total_over)
+            weekly_rule_slacks.append(shukyu_total_over)
+
         if requires_weekly_hiban(staff):
             for week_days in hiban_weeks:
                 ext_start = max(1, week_days[0] - 3)
@@ -329,6 +345,11 @@ def run_optimization(request_data: Dict[str, Any]) -> Dict[str, Any]:
             hiban_total_over = model.NewIntVar(0, days_in_month, f'hiban_total_over_{s_idx}')
             model.Add(hiban_total + hiban_total_under == len(hiban_weeks) + hiban_total_over)
             weekly_rule_slacks.extend([hiban_total_under, hiban_total_over])
+        elif staff_max_consecutive(staff) >= 6:
+            hiban_total = sum(x[(s_idx, d, '非番')] for d in days)
+            hiban_total_over = model.NewIntVar(0, days_in_month, f'hiban_total_over_{s_idx}')
+            model.Add(hiban_total <= hiban_total_over)
+            weekly_rule_slacks.append(hiban_total_over)
 
         max_work = staff_max_consecutive(staff)
         if max_work >= 7:

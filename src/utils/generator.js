@@ -1833,10 +1833,13 @@ export class Generator {
             if (visibleDays < 4) return;
 
             let exactWeekHiban = 0;
+            let exactWeekShukyu = 0;
             for (let d = week.visibleStart; d <= week.visibleEnd; d++) {
                 if (matrix[staffId]?.[d]?.symbol === '非番') exactWeekHiban++;
+                if (matrix[staffId]?.[d]?.symbol === '週休') exactWeekShukyu++;
             }
             if (exactWeekHiban >= 3) violations++;
+            if (exactWeekShukyu + exactWeekHiban >= 3) violations++;
 
             let hasHibanNearWeek = false;
             const nearStart = Math.max(startDay, week.weekStart - 3);
