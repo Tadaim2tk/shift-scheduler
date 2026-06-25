@@ -140,6 +140,7 @@ export class Store {
             { symbol: '年休', canonical: 'PAID_LEAVE', type: 'OFF', color: '#ffcccc' },
             { symbol: '出張(研修)', canonical: 'TRAINING', type: 'WORK', color: '#ccffcc' },
             { symbol: '通区', canonical: 'COMMUTE', type: 'WORK', color: '#ccddff' },
+            { symbol: '予備', canonical: 'RESERVE', type: 'WORK', color: '#e9ddff' },
             { symbol: '／', canonical: 'BLOCKED', type: 'BLOCKED', color: '#e0e0e0' },
         ];
     }
@@ -252,7 +253,7 @@ export class Store {
         });
 
         // Filter unwanted
-        const allowed = new Set(['週休', '祝日', '非番', '年休', '出張(研修)', '通区', '／', '希']);
+        const allowed = new Set(['週休', '祝日', '非番', '年休', '出張(研修)', '通区', '予備', '／', '希']);
         this.state.symbols = this.state.symbols.filter(s => allowed.has(s.symbol));
 
         // Deduplicate
@@ -445,6 +446,7 @@ export class Store {
             { symbol: '年休', canonical: 'PAID_LEAVE', type: 'OFF', color: '#ffcccc' },
             { symbol: '出張(研修)', canonical: 'TRAINING', type: 'WORK', color: '#ccffcc' },
             { symbol: '通区', canonical: 'COMMUTE', type: 'WORK', color: '#ccddff' },
+            { symbol: '予備', canonical: 'RESERVE', type: 'WORK', color: '#e9ddff' },
             { symbol: '／', canonical: 'BLOCKED', type: 'BLOCKED', color: '#e0e0e0' },
         ];
         defaults.forEach(d => {

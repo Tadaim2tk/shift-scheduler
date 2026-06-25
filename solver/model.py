@@ -18,6 +18,9 @@ def run_optimization(request_data: Dict[str, Any]) -> Dict[str, Any]:
     # can leave truly unused capacity blank without creating bogus work.
     OFF_ROUTES = ['週休', '非番', '年休', '祝日', '空き', '希', '欠', '／']
     LOCKED_ONLY_OFF_ROUTES = ['年休', '希', '欠', '／']
+    # Manual work symbols are real work days, but they are not required routes and
+    # must never appear in Missing. They are allowed for anyone when entered by hand.
+    MANUAL_WORK_ROUTES = ['通区', '予備', '出張(研修)']
     SPECIAL_DUTY_ROUTES = {'特早', '特遅'}
     SPECIAL_DUTY_EXTERNAL_MAX = int(settings.get('specialDutyExternalMaxDays') if settings.get('specialDutyExternalMaxDays') is not None else 9)
 
@@ -28,7 +31,8 @@ def run_optimization(request_data: Dict[str, Any]) -> Dict[str, Any]:
     route_ids = [r['id'] for r in routes]
     route_by_id = {r['id']: r for r in routes}
     soft_route_ids = {r['id'] for r in routes if r.get('softMissing') is True}
-    all_route_ids = route_ids + OFF_ROUTES
+    work_symbol_ids = route_ids + MANUAL_WORK_ROUTES
+    all_route_ids = route_ids + OFF_ROUTES + MANUAL_WORK_ROUTES
 
     # ----------------------------------------------------
     # Date metadata
@@ -157,6 +161,7 @@ def run_optimization(request_data: Dict[str, Any]) -> Dict[str, Any]:
             locked_cell = locked_cell_for(staff, d)
             is_locked = locked_cell.get('locked') is True
             locked_symbol = locked_cell.get('symbol')
+            has_existing_manual_work = locked_symbol in MANUAL_WORK_ROUTES
 
             allowed_routes = set(staff_caps_for_day(staff, d))
             if (not is_locked) and day_of_week in unavailable_days:
@@ -165,15 +170,25 @@ def run_optimization(request_data: Dict[str, Any]) -> Dict[str, Any]:
             if (not is_locked) and meta.get('isHol', False):
                 # Holidays are either worked or marked as holiday-off.  Do not
                 # burn normal weekly rest/non-carrier days on a holiday unless
-                # the user locked that symbol manually.
-                model.Add(x[(s_idx, d, '祝日')] + sum(x[(s_idx, d, r_id)] for r_id in route_ids) == 1)
+                # the user manually entered a work-only symbol.
+                manual_work_today = [
+                    manual_symbol
+                    for manual_symbol in MANUAL_WORK_ROUTES
+                    if locked_symbol == manual_symbol
+                ]
+                model.Add(
+                    x[(s_idx, d, '祝日')]
+                    + sum(x[(s_idx, d, r_id)] for r_id in route_ids)
+                    + sum(x[(s_idx, d, manual_symbol)] for manual_symbol in manual_work_today)
+                    == 1
+                )
                 model.Add(x[(s_idx, d, '週休')] == 0)
                 model.Add(x[(s_idx, d, '非番')] == 0)
                 model.Add(x[(s_idx, d, '空き')] == 0)
 
             required_today = {r['id'] for r in routes if required_count_for(r, d) > 0}
             usable_required_routes = allowed_routes.intersection(required_today)
-            if (not is_locked) and (is_sat or meta.get('isSun', False)) and not meta.get('isHol', False) and not usable_required_routes:
+            if (not is_locked) and not has_existing_manual_work and (is_sat or meta.get('isSun', False)) and not meta.get('isHol', False) and not usable_required_routes:
                 if meta.get('isSun', False) and requires_weekly_shukyu(staff):
                     # If a person has no usable Sunday assignment, treat Sunday
                     # as weekly rest rather than a dangling blank.
@@ -261,7 +276,7 @@ def run_optimization(request_data: Dict[str, Any]) -> Dict[str, Any]:
                     sequence.append({
                         'date': date_str,
                         'isGenerated': True,
-                        'workExpr': sum(x[(s_idx, generated_day, r_id)] for r_id in route_ids),
+                        'workExpr': sum(x[(s_idx, generated_day, r_id)] for r_id in work_symbol_ids),
                     })
                 else:
                     symbol = (staff_context.get(date_str, {}) or {}).get('symbol')
@@ -365,17 +380,21 @@ def run_optimization(request_data: Dict[str, Any]) -> Dict[str, Any]:
             model.Add(off_count + min_off_under >= staff_min_off)
             min_off_slacks.append(min_off_under)
 
-    # Do not invent manual-only symbols unless the user locked them. 祝日 can be
-    # created automatically on actual holidays; 年休/希/欠/／ never should be.
+    # Do not invent manual-only symbols unless the user already entered them.
+    # 祝日 can be created automatically on actual holidays; 年休/希/欠/／ never should be.
     for s_idx, staff in enumerate(staff_list):
         for d in days:
             cell = locked_cell_for(staff, d)
             sym = cell.get('symbol') if cell.get('locked') is True else None
+            existing_sym = cell.get('symbol')
             if sym != '祝日' and not day_meta.get(d, {}).get('isHol', False):
                 model.Add(x[(s_idx, d, '祝日')] == 0)
             for off_symbol in LOCKED_ONLY_OFF_ROUTES:
                 if sym != off_symbol:
                     model.Add(x[(s_idx, d, off_symbol)] == 0)
+            for manual_symbol in MANUAL_WORK_ROUTES:
+                if existing_sym != manual_symbol:
+                    model.Add(x[(s_idx, d, manual_symbol)] == 0)
 
     # Workload balancing.
     max_work_days = model.NewIntVar(0, days_in_month, 'max_work_days')
@@ -385,7 +404,7 @@ def run_optimization(request_data: Dict[str, Any]) -> Dict[str, Any]:
         if has_any_operational_capability(staff)
     ]
     for s_idx in active_work_staff_indexes:
-        total_work_days = sum(x[(s_idx, d, r_id)] for d in days for r_id in route_ids)
+        total_work_days = sum(x[(s_idx, d, r_id)] for d in days for r_id in work_symbol_ids)
         model.Add(total_work_days <= max_work_days)
         model.Add(total_work_days >= min_work_days)
 

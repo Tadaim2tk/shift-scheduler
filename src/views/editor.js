@@ -617,10 +617,12 @@ export class EditorView {
             if (!solvedSymbol || solvedSymbol === '空き') {
               delete sch[s_id][customDayStr];
             } else {
+              const symbolDef = this.store.state.symbols.find(x => x.symbol === solvedSymbol);
+              const routeDef = this.store.state.routes.find(x => x.id === solvedSymbol);
               sch[s_id][customDayStr] = {
                 symbol: solvedSymbol,
                 locked: effectiveMode === 'fill' && originalCell.symbol ? (originalCell.locked || false) : daysMap[idx_str].locked,
-                type: ['週休', '非番', '年休', '祝日', '希', '欠', '／'].includes(solvedSymbol) ? 'OFF' : 'ROUTE'
+                type: symbolDef?.type || (routeDef ? 'ROUTE' : 'UNKNOWN')
               };
             }
             this.store.updateSchedule(ym, sch);
@@ -1097,11 +1099,23 @@ export class EditorView {
     return !symbol || ['空き', '週休', '非番', '年休', '祝日', '希', '欠', '／', '/'].includes(symbol);
   }
 
-  isSolverRouteSymbol(symbol) {
+  isManualWorkSymbol(symbol) {
+    if (!symbol) return false;
+    const symbolDef = this.store.state.symbols.find(s => s.symbol === symbol);
+    const isRoute = this.store.state.routes.some(r => r.id === symbol);
+    return !!symbolDef && symbolDef.type === 'WORK' && !isRoute;
+  }
+
+  isSolverWorkSymbol(symbol) {
     return !!symbol && !this.isSolverOffSymbol(symbol);
   }
 
+  isSolverRouteSymbol(symbol) {
+    return !!symbol && !this.isSolverOffSymbol(symbol) && !this.isManualWorkSymbol(symbol);
+  }
+
   solverStaffCanWork(staff, routeId, label) {
+    if (this.isManualWorkSymbol(routeId)) return true;
     let caps;
     if (label.isSat) {
       caps = staff.satCapabilities || staff.weekendCapabilities || staff.capabilities || [];
@@ -1125,7 +1139,7 @@ export class EditorView {
       let violations = 0;
       sortedIndexes.forEach(dayIndex => {
         const symbol = row?.[dayIndex]?.symbol;
-        if (this.isSolverRouteSymbol(symbol)) {
+        if (this.isSolverWorkSymbol(symbol)) {
           streak++;
           if (streak > maxConsecutive) violations++;
         } else {
@@ -1160,7 +1174,7 @@ export class EditorView {
       const symbol = indexByDate.has(dateStrOrIndex)
         ? row?.[dayIndex]?.symbol
         : getStoredSymbol(dateStrOrIndex);
-      if (this.isSolverRouteSymbol(symbol)) {
+      if (this.isSolverWorkSymbol(symbol)) {
         streak++;
         if (streak > maxConsecutive) violations++;
       } else {

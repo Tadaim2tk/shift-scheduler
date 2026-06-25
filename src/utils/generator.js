@@ -51,6 +51,13 @@ export class Generator {
         return this.constraints.isOff(sym) || sym === '希' || sym === '欠' || sym === '/';
     }
 
+    isManualWorkSym(sym) {
+        if (!sym) return false;
+        const symbolDef = this.store.state.symbols.find(s => s.symbol === sym);
+        const isRoute = this.store.state.routes.some(r => r.id === sym);
+        return !!symbolDef && symbolDef.type === 'WORK' && !isRoute;
+    }
+
     isWorkSymForStreak(sym) {
         return !!sym && sym !== '祝日' && !this.isOffSym(sym);
     }
@@ -165,6 +172,7 @@ export class Generator {
     }
 
     canWorkRoute(staff, cell, routeId) {
+        if (this.isManualWorkSym(routeId)) return true;
         if (this.isUnavailableDay(staff, cell)) return false;
         const caps = this.getCapabilities(staff, cell.isSat, cell.isSunOrHol);
         return caps.includes(routeId);
@@ -1175,7 +1183,7 @@ export class Generator {
     }
 
     isRouteAssignmentSym(sym) {
-        return !!sym && sym !== '祝日' && !this.isOffSym(sym) && sym !== '欠' && sym !== '／' && sym !== '/';
+        return !!sym && sym !== '祝日' && !this.isOffSym(sym) && !this.isManualWorkSym(sym) && sym !== '欠' && sym !== '／' && sym !== '/';
     }
 
     snapshotCells(matrix, refs) {
