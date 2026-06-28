@@ -20,7 +20,8 @@ export class Store {
                 minOffPer4Weeks: 8,      // 4週あたりの最低休日数(4週8休)
                 specialDutyExternalMaxDays: 9 // 外務扱いを維持する特早/特遅の生成期間上限
             },
-            daySettings: {} // { YM: { day: { extraRoutes: [] } } }
+            daySettings: {}, // { YM: { day: { extraRoutes: [] } } }
+            journal: [] // 相談ジャーナル: { id, date, title, body, tags:[], createdAt, updatedAt }
         };
     }
 
@@ -488,6 +489,9 @@ export class Store {
         if (typeof this.state.settings.specialDutyExternalMaxDays === 'undefined') {
             this.state.settings.specialDutyExternalMaxDays = 9;
         }
+        if (!Array.isArray(this.state.journal)) {
+            this.state.journal = [];
+        }
         this.save();
     }
 
@@ -528,6 +532,90 @@ export class Store {
         if (!this.state.daySettings[ym]) this.state.daySettings[ym] = {};
         this.state.daySettings[ym][day] = { ...this.state.daySettings[ym][day], ...settings };
         this.save();
+    }
+
+    // --- 相談ジャーナル (Consultation Journal) ---
+    // あなたとAIの相談内容を日付ごとに記録し続けるための機能。
+    // entry = { id, date(YYYY-MM-DD), title, body, tags:[], createdAt, updatedAt }
+    getJournal() {
+        return Array.isArray(this.state.journal) ? this.state.journal : [];
+    }
+
+    generateJournalId() {
+        return 'j-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8);
+    }
+
+    addJournalEntry({ date, title, body, tags } = {}) {
+        if (!Array.isArray(this.state.journal)) this.state.journal = [];
+        const now = new Date().toISOString();
+        const entry = {
+            id: this.generateJournalId(),
+            date: date || now.slice(0, 10),
+            title: (title || '').trim(),
+            body: (body || '').trim(),
+            tags: this.normalizeTags(tags),
+            createdAt: now,
+            updatedAt: now
+        };
+        this.state.journal.push(entry);
+        this.save();
+        return entry;
+    }
+
+    updateJournalEntry(id, { date, title, body, tags } = {}) {
+        const entry = this.getJournal().find(e => e.id === id);
+        if (!entry) return null;
+        if (typeof date !== 'undefined') entry.date = date;
+        if (typeof title !== 'undefined') entry.title = (title || '').trim();
+        if (typeof body !== 'undefined') entry.body = (body || '').trim();
+        if (typeof tags !== 'undefined') entry.tags = this.normalizeTags(tags);
+        entry.updatedAt = new Date().toISOString();
+        this.save();
+        return entry;
+    }
+
+    deleteJournalEntry(id) {
+        if (!Array.isArray(this.state.journal)) return;
+        this.state.journal = this.state.journal.filter(e => e.id !== id);
+        this.save();
+    }
+
+    normalizeTags(tags) {
+        if (!tags) return [];
+        const arr = Array.isArray(tags)
+            ? tags
+            : String(tags).split(/[,、\s]+/);
+        return [...new Set(arr.map(t => String(t).trim()).filter(Boolean))];
+    }
+
+    // インポート: { mode: 'merge' | 'replace' }。既存IDは更新、無ければ追加。
+    importJournal(entries, mode = 'merge') {
+        if (!Array.isArray(entries)) throw new Error('ジャーナルデータの形式が不正です（配列ではありません）。');
+        const cleaned = entries
+            .filter(e => e && typeof e === 'object')
+            .map(e => {
+                const now = new Date().toISOString();
+                return {
+                    id: e.id && typeof e.id === 'string' ? e.id : this.generateJournalId(),
+                    date: e.date || now.slice(0, 10),
+                    title: (e.title || '').toString().trim(),
+                    body: (e.body || '').toString().trim(),
+                    tags: this.normalizeTags(e.tags),
+                    createdAt: e.createdAt || now,
+                    updatedAt: e.updatedAt || now
+                };
+            });
+
+        if (mode === 'replace') {
+            this.state.journal = cleaned;
+        } else {
+            if (!Array.isArray(this.state.journal)) this.state.journal = [];
+            const byId = new Map(this.state.journal.map(e => [e.id, e]));
+            cleaned.forEach(e => byId.set(e.id, e));
+            this.state.journal = [...byId.values()];
+        }
+        this.save();
+        return cleaned.length;
     }
 
     subscribe(fn) { this.listeners.push(fn); }
