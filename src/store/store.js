@@ -21,8 +21,18 @@ export class Store {
                 specialDutyExternalMaxDays: 9 // 外務扱いを維持する特早/特遅の生成期間上限
             },
             daySettings: {}, // { YM: { day: { extraRoutes: [] } } }
-            journal: [] // 相談ジャーナル: { id, date, title, body, tags:[], createdAt, updatedAt }
+            journal: [], // 日々の記録: { id, date, title, body, tags:[], createdAt, updatedAt }
+            profile: [] // あなたの仕様(パーソナライズ用の事実): { id, category, content, createdAt, updatedAt }
         };
+    }
+
+    // プロフィールの既定カテゴリ。自由入力も可。
+    getProfileCategories() {
+        return [
+            '基本情報', 'サイズ・身体', '持ち物・型番', '好み・嗜好',
+            '習慣・ルーティン', '価値観・考え方', '購入とフィードバック',
+            '仕事・スキル', '健康', '人間関係', '目標・計画', 'その他'
+        ];
     }
 
     getGroups() {
@@ -492,6 +502,9 @@ export class Store {
         if (!Array.isArray(this.state.journal)) {
             this.state.journal = [];
         }
+        if (!Array.isArray(this.state.profile)) {
+            this.state.profile = [];
+        }
         this.save();
     }
 
@@ -616,6 +629,154 @@ export class Store {
         }
         this.save();
         return cleaned.length;
+    }
+
+    // --- プロフィール (あなたの仕様 / パーソナライズ用の事実) ---
+    // fact = { id, category, content, createdAt, updatedAt }
+    getProfile() {
+        return Array.isArray(this.state.profile) ? this.state.profile : [];
+    }
+
+    addProfileFact({ category, content } = {}) {
+        if (!Array.isArray(this.state.profile)) this.state.profile = [];
+        const now = new Date().toISOString();
+        const fact = {
+            id: 'p-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8),
+            category: (category || 'その他').trim() || 'その他',
+            content: (content || '').trim(),
+            createdAt: now,
+            updatedAt: now
+        };
+        this.state.profile.push(fact);
+        this.save();
+        return fact;
+    }
+
+    updateProfileFact(id, { category, content } = {}) {
+        const fact = this.getProfile().find(f => f.id === id);
+        if (!fact) return null;
+        if (typeof category !== 'undefined') fact.category = (category || 'その他').trim() || 'その他';
+        if (typeof content !== 'undefined') fact.content = (content || '').trim();
+        fact.updatedAt = new Date().toISOString();
+        this.save();
+        return fact;
+    }
+
+    deleteProfileFact(id) {
+        if (!Array.isArray(this.state.profile)) return;
+        this.state.profile = this.state.profile.filter(f => f.id !== id);
+        this.save();
+    }
+
+    importProfile(facts, mode = 'merge') {
+        if (!Array.isArray(facts)) throw new Error('プロフィールデータの形式が不正です（配列ではありません）。');
+        const now = new Date().toISOString();
+        const cleaned = facts
+            .filter(f => f && typeof f === 'object')
+            .map(f => ({
+                id: f.id && typeof f.id === 'string' ? f.id : ('p-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8)),
+                category: (f.category || 'その他').toString().trim() || 'その他',
+                content: (f.content || '').toString().trim(),
+                createdAt: f.createdAt || now,
+                updatedAt: f.updatedAt || now
+            }));
+        if (mode === 'replace') {
+            this.state.profile = cleaned;
+        } else {
+            if (!Array.isArray(this.state.profile)) this.state.profile = [];
+            const byId = new Map(this.state.profile.map(f => [f.id, f]));
+            cleaned.forEach(f => byId.set(f.id, f));
+            this.state.profile = [...byId.values()];
+        }
+        this.save();
+        return cleaned.length;
+    }
+
+    // --- 引き継ぎ (他のAIへ丸ごと渡すためのコンテキスト) ---
+    // 全データ(プロフィール + 日々の記録)を1つのJSONバックアップにまとめる。
+    exportAll() {
+        return {
+            type: 'shift-scheduler-personal-context',
+            version: 1,
+            exportedAt: new Date().toISOString(),
+            profile: this.getProfile(),
+            journal: this.getJournal()
+        };
+    }
+
+    importAll(payload, mode = 'merge') {
+        const data = (payload && typeof payload === 'object') ? payload : {};
+        let count = 0;
+        if (Array.isArray(data.profile)) count += this.importProfile(data.profile, mode);
+        if (Array.isArray(data.journal)) count += this.importJournal(data.journal, mode);
+        return count;
+    }
+
+    // どのAIにもそのまま貼り付けて使える「私について」コンテキストをMarkdownで生成する。
+    buildContextMarkdown() {
+        const profile = this.getProfile();
+        const journal = [...this.getJournal()].sort((a, b) => {
+            if (a.date !== b.date) return a.date < b.date ? 1 : -1;
+            return (b.createdAt || '').localeCompare(a.createdAt || '');
+        });
+
+        const lines = [];
+        lines.push('# あなた（AI）へ — これは私についての情報です');
+        lines.push('');
+        lines.push('以下は私（ユーザー本人）のプロフィールと記録です。これを長期記憶・前提として扱い、');
+        lines.push('一般論ではなく、私個人に最適化された助言・提案を行ってください。');
+        lines.push('矛盾や古い情報に気づいたら指摘してください。');
+        lines.push('');
+        lines.push(`（出力日時: ${new Date().toISOString().slice(0, 16).replace('T', ' ')}）`);
+        lines.push('');
+
+        lines.push('## プロフィール（私の仕様・好み・持ち物など）');
+        if (profile.length) {
+            // カテゴリ単位でまとめる。出現順はカテゴリ既定順 → その他。
+            const order = this.getProfileCategories();
+            const byCat = new Map();
+            profile.forEach(f => {
+                const c = f.category || 'その他';
+                if (!byCat.has(c)) byCat.set(c, []);
+                byCat.get(c).push(f);
+            });
+            const cats = [...byCat.keys()].sort((a, b) => {
+                const ia = order.indexOf(a); const ib = order.indexOf(b);
+                return (ia < 0 ? 999 : ia) - (ib < 0 ? 999 : ib);
+            });
+            cats.forEach(c => {
+                lines.push('');
+                lines.push(`### ${c}`);
+                byCat.get(c).forEach(f => {
+                    f.content.split('\n').forEach((ln, i) => {
+                        lines.push(i === 0 ? `- ${ln}` : `  ${ln}`);
+                    });
+                });
+            });
+        } else {
+            lines.push('');
+            lines.push('（まだ登録なし）');
+        }
+
+        lines.push('');
+        lines.push('## 日々の記録（新しい順）');
+        if (journal.length) {
+            journal.forEach(e => {
+                lines.push('');
+                lines.push(`### ${e.date}${e.title ? ' ' + e.title : ''}`);
+                if ((e.tags || []).length) lines.push(`タグ: ${e.tags.join(', ')}`);
+                if (e.body) {
+                    lines.push('');
+                    e.body.split('\n').forEach(ln => lines.push(ln));
+                }
+            });
+        } else {
+            lines.push('');
+            lines.push('（まだ記録なし）');
+        }
+
+        lines.push('');
+        return lines.join('\n');
     }
 
     subscribe(fn) { this.listeners.push(fn); }

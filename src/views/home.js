@@ -11,7 +11,7 @@ export class HomeView {
           <button id="btn-import">📸 写真から作成</button>
           <button id="btn-manual" class="secondary">📝 手動で新規作成</button>
           <button id="btn-settings" class="outline">⚙️ 設定 (社員・記号)</button>
-          <button id="btn-journal" class="outline">💬 相談ジャーナル</button>
+          <button id="btn-journal" class="outline">🧠 あなたの相棒メモ</button>
         </div>
       </div>
     `;
