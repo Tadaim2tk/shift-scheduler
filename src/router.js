@@ -2,7 +2,6 @@ import { HomeView } from './views/home.js';
 import { ImportView } from './views/import.js';
 import { SettingsView } from './views/settings.js';
 import { EditorView } from './views/editor.js';
-import { JournalView } from './views/journal.js';
 
 export class Router {
     constructor() {
@@ -11,7 +10,6 @@ export class Router {
             'import': ImportView,
             'settings': SettingsView,
             'editor': EditorView,
-            'journal': JournalView,
         };
         this.currentView = null;
         this.appElement = document.getElementById('app');
