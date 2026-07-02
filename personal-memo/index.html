@@ -1,0 +1,473 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex, nofollow">
+<title>あなたの相棒メモ</title>
+<style>
+  :root {
+    --bg: #1e1e1e; --text: #e0e0e0; --primary: #646cff; --secondary: #4a4a4a;
+    --danger: #da3633; --border: #30363d; --panel: #2d2d2d; --input: #0d1117; --hover: #30363d;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    background: var(--bg); color: var(--text); line-height: 1.5;
+  }
+  .wrap { max-width: 820px; margin: 0 auto; padding: 1rem; }
+  h1, h2, h3 { color: #fff; margin-top: 0; }
+  button {
+    cursor: pointer; padding: 0.5rem 1rem; border: 1px solid var(--border); border-radius: 6px;
+    background: var(--panel); color: var(--text); font-size: 0.9rem; font-weight: 500; transition: all .15s;
+  }
+  button:hover { background: var(--hover); border-color: var(--primary); }
+  button:disabled { opacity: .6; cursor: default; }
+  button.primary { background: var(--primary); border-color: var(--primary); color: #fff; }
+  button.primary:hover { background: #535bf2; }
+  button.danger { background: rgba(218,54,51,.1); color: #f85149; border-color: rgba(218,54,51,.4); }
+  button.danger:hover { background: var(--danger); color: #fff; }
+  button.outline { background: transparent; border-color: var(--secondary); }
+  button.small { padding: .25rem .5rem; font-size: .8rem; }
+  input, select, textarea {
+    background: var(--input); color: var(--text); border: 1px solid var(--border);
+    padding: 6px 12px; border-radius: 6px; font-family: inherit; font-size: .9rem;
+  }
+  input:focus, textarea:focus, select:focus { outline: 2px solid var(--primary); border-color: transparent; }
+  textarea { width: 100%; resize: vertical; }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 1rem; margin-bottom: 1rem; box-shadow: 0 4px 6px rgba(0,0,0,.3); }
+  .flex { display: flex; } .col { flex-direction: column; } .wrapf { flex-wrap: wrap; }
+  .between { justify-content: space-between; } .center { align-items: center; }
+  .gap2 { gap: .5rem; } .gap4 { gap: 1rem; }
+  .hidden { display: none !important; }
+  .muted { opacity: .7; font-size: .8rem; }
+  .tabs { border-bottom: 1px solid var(--border); margin-bottom: 1rem; }
+  .tag { background: var(--hover); border-radius: 4px; padding: 1px 6px; font-size: .75rem; }
+  .item { background: var(--input); border-radius: 6px; padding: .5rem .75rem; }
+  label.field { display: flex; flex-direction: column; gap: .35rem; }
+  label.field > span { font-size: .8rem; opacity: .8; }
+  .pre { white-space: pre-wrap; word-break: break-word; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="flex between center" style="margin-bottom:1.25rem;">
+    <h1 style="margin:0;">🧠 あなたの相棒メモ</h1>
+    <span class="muted">独立アプリ（このブラウザ内に保存）</span>
+  </div>
+
+  <div class="tabs flex gap2 wrapf" id="tabs">
+    <button data-tab="profile">🪪 プロフィール</button>
+    <button data-tab="log">📝 日々の記録</button>
+    <button data-tab="handoff">🔄 引き継ぎ・バックアップ</button>
+  </div>
+
+  <div id="content"></div>
+</div>
+
+<script>
+"use strict";
+
+// ===== ストレージ =====
+// シフトスケジューラーとは別キー。完全に独立したデータ。
+const KEY = "personal-memo-data";
+const CATEGORIES = [
+  "基本情報","サイズ・身体","持ち物・型番","好み・嗜好","習慣・ルーティン",
+  "価値観・考え方","購入とフィードバック","仕事・スキル","健康","人間関係","目標・計画","その他"
+];
+
+function load() {
+  try {
+    const raw = localStorage.getItem(KEY);
+    if (!raw) return { profile: [], journal: [] };
+    const d = JSON.parse(raw);
+    return { profile: Array.isArray(d.profile) ? d.profile : [], journal: Array.isArray(d.journal) ? d.journal : [] };
+  } catch (e) { return { profile: [], journal: [] }; }
+}
+function save() { localStorage.setItem(KEY, JSON.stringify(state)); }
+let state = load();
+
+// ===== ヘルパー =====
+function esc(s) {
+  return String(s == null ? "" : s)
+    .replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")
+    .replace(/"/g,"&quot;").replace(/'/g,"&#39;");
+}
+function nowISO() { return new Date().toISOString(); }
+function today() {
+  const n = new Date();
+  return n.getFullYear() + "-" + String(n.getMonth()+1).padStart(2,"0") + "-" + String(n.getDate()).padStart(2,"0");
+}
+function stamp() {
+  const n = new Date();
+  return "" + n.getFullYear() + String(n.getMonth()+1).padStart(2,"0") + String(n.getDate()).padStart(2,"0");
+}
+function uid(p) { return p + "-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2,8); }
+function normTags(t) {
+  if (!t) return [];
+  const a = Array.isArray(t) ? t : String(t).split(/[,、\s]+/);
+  return [...new Set(a.map(x => String(x).trim()).filter(Boolean))];
+}
+function el(sel) { return document.querySelector(sel); }
+function all(sel) { return document.querySelectorAll(sel); }
+function download(name, content, type) {
+  const blob = new Blob([content], { type });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = name;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+function flash(btn, msg) {
+  if (!btn) return;
+  const o = btn.textContent;
+  btn.textContent = msg; btn.disabled = true;
+  setTimeout(() => { btn.textContent = o; btn.disabled = false; }, 1500);
+}
+
+// ===== データ操作 =====
+function addFact(category, content) {
+  const t = nowISO();
+  state.profile.push({ id: uid("p"), category: (category||"その他").trim()||"その他", content: content.trim(), createdAt: t, updatedAt: t });
+  save();
+}
+function updateFact(id, category, content) {
+  const f = state.profile.find(x => x.id === id); if (!f) return;
+  f.category = (category||"その他").trim()||"その他"; f.content = content.trim(); f.updatedAt = nowISO(); save();
+}
+function deleteFact(id) { state.profile = state.profile.filter(x => x.id !== id); save(); }
+
+function addEntry(date, title, body, tags) {
+  const t = nowISO();
+  state.journal.push({ id: uid("j"), date: date||today(), title: (title||"").trim(), body: (body||"").trim(), tags: normTags(tags), createdAt: t, updatedAt: t });
+  save();
+}
+function updateEntry(id, date, title, body, tags) {
+  const e = state.journal.find(x => x.id === id); if (!e) return;
+  e.date = date||e.date; e.title = (title||"").trim(); e.body = (body||"").trim(); e.tags = normTags(tags); e.updatedAt = nowISO(); save();
+}
+function deleteEntry(id) { state.journal = state.journal.filter(x => x.id !== id); save(); }
+
+function sortedJournal() {
+  return [...state.journal].sort((a,b) => {
+    if (a.date !== b.date) return a.date < b.date ? 1 : -1;
+    return (b.createdAt||"").localeCompare(a.createdAt||"");
+  });
+}
+
+function importData(payload, mode) {
+  const data = (payload && typeof payload === "object") ? payload : {};
+  let count = 0;
+  const merge = (arr, key, prefix, mapper) => {
+    if (!Array.isArray(arr)) return;
+    const cleaned = arr.filter(x => x && typeof x === "object").map(mapper);
+    if (mode === "replace") { state[key] = cleaned; }
+    else {
+      const byId = new Map(state[key].map(x => [x.id, x]));
+      cleaned.forEach(x => byId.set(x.id, x));
+      state[key] = [...byId.values()];
+    }
+    count += cleaned.length;
+  };
+  // 旧シフトスケジューラー版ジャーナル単体(配列 or {entries})にも対応
+  const journalArr = Array.isArray(data) ? data : (data.journal || data.entries);
+  merge(journalArr, "journal", "j", e => {
+    const t = nowISO();
+    return { id: typeof e.id === "string" ? e.id : uid("j"), date: e.date||today(),
+      title: (e.title||"").toString().trim(), body: (e.body||"").toString().trim(),
+      tags: normTags(e.tags), createdAt: e.createdAt||t, updatedAt: e.updatedAt||t };
+  });
+  merge(data.profile, "profile", "p", f => {
+    const t = nowISO();
+    return { id: typeof f.id === "string" ? f.id : uid("p"), category: (f.category||"その他").toString().trim()||"その他",
+      content: (f.content||"").toString().trim(), createdAt: f.createdAt||t, updatedAt: f.updatedAt||t };
+  });
+  save();
+  return count;
+}
+
+// ===== 引き継ぎMarkdown生成 =====
+function buildContext() {
+  const L = [];
+  L.push("# あなた（AI）へ — これは私についての情報です","");
+  L.push("以下は私（ユーザー本人）のプロフィールと記録です。これを長期記憶・前提として扱い、");
+  L.push("一般論ではなく、私個人に最適化された助言・提案を行ってください。");
+  L.push("矛盾や古い情報に気づいたら指摘してください。","");
+  L.push("（出力日時: " + nowISO().slice(0,16).replace("T"," ") + "）","");
+
+  L.push("## プロフィール（私の仕様・好み・持ち物など）");
+  if (state.profile.length) {
+    const byCat = new Map();
+    state.profile.forEach(f => {
+      const c = f.category || "その他";
+      if (!byCat.has(c)) byCat.set(c, []);
+      byCat.get(c).push(f);
+    });
+    const cats = [...byCat.keys()].sort((a,b) => {
+      const ia = CATEGORIES.indexOf(a), ib = CATEGORIES.indexOf(b);
+      return (ia<0?999:ia) - (ib<0?999:ib);
+    });
+    cats.forEach(c => {
+      L.push("", "### " + c);
+      byCat.get(c).forEach(f => f.content.split("\n").forEach((ln,i) => L.push(i===0 ? "- "+ln : "  "+ln)));
+    });
+  } else { L.push("", "（まだ登録なし）"); }
+
+  L.push("", "## 日々の記録（新しい順）");
+  const js = sortedJournal();
+  if (js.length) {
+    js.forEach(e => {
+      L.push("", "### " + e.date + (e.title ? " " + e.title : ""));
+      if ((e.tags||[]).length) L.push("タグ: " + e.tags.join(", "));
+      if (e.body) { L.push(""); e.body.split("\n").forEach(ln => L.push(ln)); }
+    });
+  } else { L.push("", "（まだ記録なし）"); }
+  L.push("");
+  return L.join("\n");
+}
+
+// ===== 画面状態 =====
+let activeTab = "profile";
+let search = "";
+let editFactId = null;
+let editEntryId = null;
+
+function render() {
+  all("#tabs button").forEach(b => {
+    b.className = (b.dataset.tab === activeTab) ? "" : "outline";
+  });
+  const c = el("#content");
+  if (activeTab === "profile") renderProfile(c);
+  else if (activeTab === "log") renderLog(c);
+  else renderHandoff(c);
+}
+
+// ----- プロフィール -----
+function renderProfile(root) {
+  const editing = editFactId ? state.profile.find(f => f.id === editFactId) : null;
+  const q = search.trim().toLowerCase();
+  let facts = [...state.profile];
+  if (q) facts = facts.filter(f => (f.category + " " + f.content).toLowerCase().includes(q));
+  const byCat = new Map();
+  facts.forEach(f => { const c = f.category||"その他"; if (!byCat.has(c)) byCat.set(c, []); byCat.get(c).push(f); });
+  const cats = [...byCat.keys()].sort((a,b) => {
+    const ia = CATEGORIES.indexOf(a), ib = CATEGORIES.indexOf(b);
+    return (ia<0?999:ia) - (ib<0?999:ib);
+  });
+
+  root.innerHTML = `
+    <div class="card">
+      <h3 style="margin-bottom:.5rem;">${editing ? "✏️ 仕様を編集" : "➕ あなたの仕様を追加"}</h3>
+      <p class="muted" style="margin-top:0;">型番・サイズ・好み・買ったもの＆感想など、思いついた事実を一行ずつ。</p>
+      <div class="flex col gap2">
+        <div class="flex gap2 wrapf">
+          <label class="field" style="flex:0 0 auto;">
+            <span>カテゴリ</span>
+            <input list="catlist" id="p-cat" placeholder="持ち物・型番 など" value="${esc(editing ? editing.category : "")}">
+            <datalist id="catlist">${CATEGORIES.map(c => `<option value="${esc(c)}">`).join("")}</datalist>
+          </label>
+          <label class="field" style="flex:1 1 260px;">
+            <span>内容</span>
+            <textarea id="p-content" rows="2" placeholder="例: 洗濯機は Panasonic NA-FA80H9（2023年購入）／靴下は25-27cm">${esc(editing ? editing.content : "")}</textarea>
+          </label>
+        </div>
+        <div class="flex gap2">
+          <button class="primary" id="p-save">${editing ? "更新する" : "追加する"}</button>
+          ${editing ? '<button class="outline" id="p-cancel">キャンセル</button>' : ""}
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="flex between center gap2 wrapf" style="margin-bottom:.75rem;">
+        <input type="text" id="p-search" placeholder="🔍 仕様を検索…" value="${esc(search)}" style="flex:1 1 200px;">
+        <span class="muted">全 ${state.profile.length} 件${search ? ` 中 ${facts.length} 件` : ""}</span>
+      </div>
+      ${facts.length ? cats.map(c => `
+        <div style="margin-bottom:1rem;">
+          <div style="font-weight:600;border-bottom:1px solid var(--border);padding-bottom:.25rem;margin-bottom:.5rem;">${esc(c)}</div>
+          <div class="flex col gap2">
+            ${byCat.get(c).map(f => `
+              <div class="flex between center gap2 item">
+                <div class="pre" style="flex:1;">${esc(f.content)}</div>
+                <div class="flex gap2">
+                  <button class="outline small" data-ef="${esc(f.id)}">編集</button>
+                  <button class="danger small" data-df="${esc(f.id)}">削除</button>
+                </div>
+              </div>`).join("")}
+          </div>
+        </div>`).join("")
+      : `<p class="muted" style="text-align:center;padding:1.5rem;">${state.profile.length ? "一致する仕様がありません。" : "まだ登録がありません。あなたの「仕様」を気軽に足していきましょう。"}</p>`}
+    </div>
+  `;
+
+  el("#p-save").onclick = () => {
+    const cat = el("#p-cat").value, content = el("#p-content").value;
+    if (!content.trim()) { alert("内容を入力してください。"); return; }
+    if (editFactId) { updateFact(editFactId, cat, content); editFactId = null; }
+    else addFact(cat, content);
+    render();
+  };
+  if (el("#p-cancel")) el("#p-cancel").onclick = () => { editFactId = null; render(); };
+  el("#p-search").oninput = (e) => { search = e.target.value; renderProfile(root); };
+  all("[data-ef]").forEach(b => b.onclick = () => { editFactId = b.dataset.ef; render(); window.scrollTo({top:0,behavior:"smooth"}); });
+  all("[data-df]").forEach(b => b.onclick = () => { if (confirm("この項目を削除しますか？")) { deleteFact(b.dataset.df); if (editFactId===b.dataset.df) editFactId=null; render(); } });
+}
+
+// ----- 日々の記録 -----
+function renderLog(root) {
+  const editing = editEntryId ? state.journal.find(e => e.id === editEntryId) : null;
+  const q = search.trim().toLowerCase();
+  let entries = sortedJournal();
+  if (q) entries = entries.filter(e => [e.title, e.body, (e.tags||[]).join(" ")].join(" ").toLowerCase().includes(q));
+
+  root.innerHTML = `
+    <div class="card">
+      <h3 style="margin-bottom:.5rem;">${editing ? "✏️ 記録を編集" : "📝 今日の記録"}</h3>
+      <p class="muted" style="margin-top:0;">考えたこと・買ったもの・感想など、気の向くままに。</p>
+      <div class="flex col gap2">
+        <div class="flex gap2 wrapf">
+          <label class="field" style="flex:0 0 auto;">
+            <span>日付</span>
+            <input type="date" id="j-date" value="${esc(editing ? editing.date : today())}">
+          </label>
+          <label class="field" style="flex:1 1 200px;">
+            <span>タイトル（任意）</span>
+            <input type="text" id="j-title" placeholder="例: 洗濯槽クリーナーを買った" value="${esc(editing ? editing.title : "")}">
+          </label>
+        </div>
+        <label class="field">
+          <span>内容</span>
+          <textarea id="j-body" rows="6" placeholder="相談したこと、買ったもの、使ってみた感想などを自由に。">${esc(editing ? editing.body : "")}</textarea>
+        </label>
+        <label class="field">
+          <span>タグ（任意・カンマ区切り）</span>
+          <input type="text" id="j-tags" placeholder="例: 買い物, 家電, 感想" value="${esc(editing ? (editing.tags||[]).join(", ") : "")}">
+        </label>
+        <div class="flex gap2">
+          <button class="primary" id="j-save">${editing ? "更新する" : "記録する"}</button>
+          ${editing ? '<button class="outline" id="j-cancel">キャンセル</button>' : ""}
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="flex between center gap2 wrapf" style="margin-bottom:.75rem;">
+        <input type="text" id="j-search" placeholder="🔍 キーワードで検索…" value="${esc(search)}" style="flex:1 1 200px;">
+        <span class="muted">全 ${state.journal.length} 件${search ? ` 中 ${entries.length} 件` : ""}</span>
+      </div>
+      <div class="flex col gap2">
+        ${entries.length ? entries.map(e => `
+          <div class="card item" style="margin-bottom:0;">
+            <div class="flex between center gap2 wrapf">
+              <div><strong>${esc(e.date)}</strong>${e.title ? " ・ " + esc(e.title) : ""}</div>
+              <div class="flex gap2">
+                <button class="outline small" data-ee="${esc(e.id)}">編集</button>
+                <button class="danger small" data-de="${esc(e.id)}">削除</button>
+              </div>
+            </div>
+            ${e.body ? `<div class="pre" style="margin-top:.5rem;">${esc(e.body)}</div>` : ""}
+            ${(e.tags||[]).length ? `<div class="flex gap2 wrapf" style="margin-top:.5rem;">${e.tags.map(t => `<span class="tag">#${esc(t)}</span>`).join(" ")}</div>` : ""}
+          </div>`).join("")
+        : `<p class="muted" style="text-align:center;padding:1.5rem;">${state.journal.length ? "一致する記録がありません。" : "まだ記録がありません。"}</p>`}
+      </div>
+    </div>
+  `;
+
+  el("#j-save").onclick = () => {
+    const date = el("#j-date").value, title = el("#j-title").value, body = el("#j-body").value, tags = el("#j-tags").value;
+    if (!body.trim() && !title.trim()) { alert("タイトルか内容のいずれかを入力してください。"); return; }
+    if (editEntryId) { updateEntry(editEntryId, date, title, body, tags); editEntryId = null; }
+    else addEntry(date, title, body, tags);
+    render();
+  };
+  if (el("#j-cancel")) el("#j-cancel").onclick = () => { editEntryId = null; render(); };
+  el("#j-search").oninput = (e) => { search = e.target.value; renderLog(root); };
+  all("[data-ee]").forEach(b => b.onclick = () => { editEntryId = b.dataset.ee; render(); window.scrollTo({top:0,behavior:"smooth"}); });
+  all("[data-de]").forEach(b => b.onclick = () => { if (confirm("この記録を削除しますか？この操作は元に戻せません。")) { deleteEntry(b.dataset.de); if (editEntryId===b.dataset.de) editEntryId=null; render(); } });
+}
+
+// ----- 引き継ぎ・バックアップ -----
+function renderHandoff(root) {
+  const md = buildContext();
+  root.innerHTML = `
+    <div class="card">
+      <h3 style="margin-bottom:.5rem;">🔄 他のAIに引き継ぐ</h3>
+      <p class="muted" style="margin-top:0;">
+        下の「私について」テキストを丸ごとコピーして、ChatGPT / Gemini / 他のClaude などの最初のメッセージに貼り付ければ、
+        あなたの仕様を引き継いだ状態で会話を始められます。（プロフィール ${state.profile.length} 件 ／ 記録 ${state.journal.length} 件）
+      </p>
+      <div class="flex gap2 wrapf" style="margin-bottom:.75rem;">
+        <button class="primary" id="h-copy">📋 コピー</button>
+        <button class="outline" id="h-savemd">⬇ テキスト(.md)で保存</button>
+      </div>
+      <textarea id="h-preview" rows="14" readonly style="font-family:monospace;font-size:.8rem;">${esc(md)}</textarea>
+    </div>
+
+    <div class="card">
+      <h3 style="margin-bottom:.5rem;">💾 バックアップ / 復元（JSON）</h3>
+      <p class="muted" style="margin-top:0;">別の端末・ブラウザに移すときは、JSONで書き出して読み込んでください。プロフィールと記録の両方が対象です。</p>
+      <div class="flex gap2 wrapf">
+        <button class="outline" id="h-exp">⬇ 全データをJSONで書き出し</button>
+        <button class="outline" id="h-imp">⬆ JSONを読み込み</button>
+        <input type="file" id="h-file" accept="application/json,.json" class="hidden">
+      </div>
+    </div>
+
+    <div class="card">
+      <h3 style="margin-bottom:.5rem;">📥 他チャットの相談を取り込む</h3>
+      <p class="muted" style="margin-top:0;">他のAIとのやり取りや覚えておきたい相談を、ここに貼り付けて「記録に追加」すると、日々の記録として保存されます。</p>
+      <textarea id="h-paste" rows="6" placeholder="ここに会話や相談内容を貼り付け…"></textarea>
+      <div class="flex gap2 wrapf" style="margin-top:.5rem;">
+        <input type="text" id="h-ptitle" placeholder="タイトル（任意・例: ChatGPTでの相談）" style="flex:1 1 200px;">
+        <button class="primary" id="h-padd">記録に追加</button>
+      </div>
+    </div>
+  `;
+
+  el("#h-copy").onclick = async () => {
+    const text = buildContext();
+    try { await navigator.clipboard.writeText(text); flash(el("#h-copy"), "✅ コピーしました"); }
+    catch (e) {
+      const ta = el("#h-preview"); ta.removeAttribute("readonly"); ta.focus(); ta.select();
+      const ok = document.execCommand && document.execCommand("copy");
+      ta.setAttribute("readonly", "true");
+      flash(el("#h-copy"), ok ? "✅ コピーしました" : "⚠ 手動でコピーしてください");
+    }
+  };
+  el("#h-savemd").onclick = () => download("私について-" + stamp() + ".md", buildContext(), "text/markdown");
+  el("#h-exp").onclick = () => download("personal-memo-" + stamp() + ".json",
+    JSON.stringify({ type: "personal-memo", version: 1, exportedAt: nowISO(), profile: state.profile, journal: state.journal }, null, 2),
+    "application/json");
+  el("#h-imp").onclick = () => el("#h-file").click();
+  el("#h-file").onchange = (ev) => {
+    const file = ev.target.files && ev.target.files[0]; if (!file) return;
+    const r = new FileReader();
+    r.onload = () => {
+      try {
+        const parsed = JSON.parse(r.result);
+        const replace = confirm("インポート方法を選択してください。\n\n［OK］ 既存データを置き換える\n［キャンセル］ 既存に追加（マージ）する");
+        const count = importData(parsed, replace ? "replace" : "merge");
+        render(); alert(count + " 件を読み込みました。");
+      } catch (err) { alert("読み込みに失敗しました: " + err.message); }
+      finally { ev.target.value = ""; }
+    };
+    r.readAsText(file);
+  };
+  el("#h-padd").onclick = () => {
+    const body = el("#h-paste").value, title = el("#h-ptitle").value;
+    if (!body.trim()) { alert("取り込む内容を貼り付けてください。"); return; }
+    addEntry(today(), title || "取り込んだ相談", body, "取り込み");
+    el("#h-paste").value = ""; el("#h-ptitle").value = "";
+    flash(el("#h-padd"), "✅ 追加しました");
+  };
+}
+
+// ===== 起動 =====
+all("#tabs button").forEach(b => b.onclick = () => {
+  activeTab = b.dataset.tab; search = ""; editFactId = null; editEntryId = null; render();
+});
+render();
+</script>
+</body>
+</html>
