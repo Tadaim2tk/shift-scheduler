@@ -1,20 +1,28 @@
-# 共有機能のセットアップ (管理者向け・1回だけ)
+# 共有機能のセットアップ (管理者向け)
 
 シフト表の共有機能は、Vercel の **Blob ストレージ** に共有データを保存します。
-ストアを1度作成するだけで有効になります (無料枠で十分動きます)。
 
-## 手順 (約1分)
+## 現在の設定 (2026-07-11 設定済み)
 
-1. https://vercel.com にログインし、`shift-scheduler` プロジェクトを開く
-2. 上部タブの **Storage** をクリック
-3. **Create Database** (または Create Store) → **Blob** を選択
-4. 名前はそのままでよいので **Create** → **Connect to Project** で `shift-scheduler` に接続
-5. プロジェクトを **Redeploy** する (Deployments タブ → 最新デプロイの「…」→ Redeploy)
+- ストア: `shift-scheduler-shares` (Public / IAD1) — 共有データ専用
+- プロジェクト `shift-scheduler` に **Production, Preview** 環境で接続済み
+- 接続時のプレフィックス: `SHARE_BLOB` → 環境変数 `SHARE_BLOB_READ_WRITE_TOKEN` などが自動作成済み
+- `api/share.js` は `SHARE_BLOB_READ_WRITE_TOKEN` を優先し、無ければ標準の `BLOB_READ_WRITE_TOKEN` を使う
+- 備考: `shift-scheduler-blob` という空のストアも存在する (最初の作成時に
+  トークン無しで自動接続されたもの)。未使用なので、気になる場合は
+  Vercel の Storage 画面から削除してよい (`BLOB_STORE_ID` / `BLOB_WEBHOOK_PUBLIC_KEY` も一緒に消える)
 
-接続すると環境変数 `BLOB_READ_WRITE_TOKEN` が自動でプロジェクトに追加され、
-`/api/share` が動くようになります。
+## ゼロから再設定する場合の手順
 
-ストア未作成のまま共有ボタンを押した場合は、アプリ内に
+1. https://vercel.com にログインし、チームの **Storage** (All Databases) を開く
+2. **Create Database** → **Blob** → Access は **Public** を選んで作成
+3. 作成したストアの **Connect Project** で `shift-scheduler` を選択
+4. **「Add a read-write token env var to this connection」に必ずチェック**
+   (これを忘れると読み書きトークンが作られず、共有 API が動かない)
+5. プレフィックスを変えた場合は `api/share.js` の `blobToken()` を合わせる
+6. プロジェクトを **Redeploy** (main へのマージでも可)
+
+ストア未設定のまま共有ボタンを押した場合は、アプリ内に
 「共有ストレージが未設定です」というメッセージが表示されます (エラーで壊れることはありません)。
 
 ## 使い方

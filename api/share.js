@@ -7,6 +7,12 @@ const CODE_LENGTH = 8;
 // 数年分のスケジュールを含む全量 state でも十分収まる上限。
 const MAX_PAYLOAD_BYTES = 3_000_000;
 
+// 共有専用ストア (shift-scheduler-shares) はプレフィックス SHARE_BLOB で接続している。
+// 標準名 BLOB_READ_WRITE_TOKEN の接続に切り替えた場合もそのまま動くよう両対応。
+function blobToken() {
+    return process.env.SHARE_BLOB_READ_WRITE_TOKEN || process.env.BLOB_READ_WRITE_TOKEN;
+}
+
 function generateCode() {
     const bytes = crypto.randomBytes(CODE_LENGTH);
     let code = '';
@@ -40,7 +46,7 @@ export default async function handler(req, res) {
         return;
     }
 
-    if (!process.env.BLOB_READ_WRITE_TOKEN) {
+    if (!blobToken()) {
         sendJson(res, 503, {
             error: 'storage_not_configured',
             message: '共有ストレージが未設定です。管理者が Vercel で Blob ストアを作成すると使えるようになります。'
@@ -101,7 +107,8 @@ async function handleCreate(req, res) {
                 access: 'public',
                 addRandomSuffix: false,
                 allowOverwrite: false,
-                contentType: 'application/json'
+                contentType: 'application/json',
+                token: blobToken()
             });
             sendJson(res, 200, { code });
             return;
@@ -122,7 +129,7 @@ async function handleFetch(req, res) {
     }
 
     const pathname = `shares/${code}.json`;
-    const { blobs } = await list({ prefix: pathname, limit: 1 });
+    const { blobs } = await list({ prefix: pathname, limit: 1, token: blobToken() });
     const blob = blobs.find(b => b.pathname === pathname);
     if (!blob) {
         sendJson(res, 404, { error: 'not_found', message: '共有が見つかりません。コードが正しいか確認してください。' });
