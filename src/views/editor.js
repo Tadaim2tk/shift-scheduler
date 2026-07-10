@@ -318,6 +318,7 @@ export class EditorView {
               <button id="btn-auto-full" class="warning" title="ロックされていないセルをクリアして全体を再構築">🔒 リセット＆再構築</button>
             </div>
             <button id="btn-pdf-export" class="outline">📄 PDF出力</button>
+            <button id="btn-share" class="outline" title="リンクを送るだけで、相手にこの表を渡せます">🔗 共有</button>
             <button id="btn-save" class="primary">保存</button>
           </div>
         </div>
@@ -357,6 +358,17 @@ export class EditorView {
                      <div class="flex justify-between">
                          <button id="confirm-no" class="outline">キャンセル</button>
                          <button id="confirm-yes" class="danger">すべてクリア</button>
+                     </div>
+                 </div>
+            </div>
+
+            <!-- Share Modal -->
+            <div id="share-modal" class="hidden" style="position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.6); z-index:2000; display:flex; justify-content:center; align-items:center;">
+                 <div class="card" style="min-width:340px; max-width:500px; text-align:left;">
+                     <h3 style="margin-top:0;">🔗 シフト表を共有</h3>
+                     <div id="share-modal-body">共有リンクを作成しています…</div>
+                     <div style="text-align:right; margin-top:12px;">
+                        <button id="share-modal-close" class="outline">閉じる</button>
                      </div>
                  </div>
             </div>
@@ -812,6 +824,54 @@ export class EditorView {
     });
 
     addListener('#btn-save', 'click', () => alert('Saved!'));
+
+    // --- 共有 ---
+    // 共有ボタン: 全データをサーバーに保存し、相手が1タップで取り込めるリンクを発行する。
+    const shareModal = container.querySelector('#share-modal');
+    const shareModalBody = container.querySelector('#share-modal-body');
+    addListener('#share-modal-close', 'click', () => shareModal.classList.add('hidden'));
+
+    addListener('#btn-share', 'click', async () => {
+      shareModalBody.textContent = '共有リンクを作成しています…';
+      shareModal.classList.remove('hidden');
+      try {
+        const { ShareAPI } = await import('../api/share_api.js');
+        const code = await ShareAPI.create(this.store.state, {
+          startDate: this.currentStartDate,
+          periodDays: this.periodDays
+        });
+        const url = ShareAPI.buildShareUrl(code);
+        const lineText = `シフト表を共有します。このリンクを開いて「取り込む」を押してください。\n${url}`;
+        const lineHref = `https://line.me/R/share?text=${encodeURIComponent(lineText)}`;
+
+        shareModalBody.innerHTML = `
+          <p style="margin-top:0;">このリンクを相手に送ってください。<br>相手はリンクを開いて「取り込む」を押すだけで、この表がそのまま見られます。</p>
+          <div style="display:flex; gap:6px; margin:10px 0;">
+            <input id="share-url" readonly value="${url}" style="flex:1; padding:6px; font-size:0.85em;">
+            <button id="share-copy" class="small">コピー</button>
+          </div>
+          <div style="margin:10px 0;">
+            <a href="${lineHref}" target="_blank" rel="noopener" style="display:inline-block; background:#06C755; color:#fff; padding:8px 16px; border-radius:6px; text-decoration:none; font-weight:bold;">LINE で送る</a>
+          </div>
+          <p style="font-size:0.85em; color:#aaa;">リンクが使えない相手には、ホーム画面の「共有コードで取り込む」にこのコードを入力してもらってください。<br>
+          共有コード: <strong style="color:#fff; font-size:1.2em; letter-spacing:1px;">${ShareAPI.formatCode(code)}</strong></p>
+          <p style="font-size:0.8em; color:#888;">※ 共有した後にこちらで直した内容は自動では伝わりません。直したら、もう一度「共有」して新しいリンクを送ってください。</p>
+        `;
+
+        shareModalBody.querySelector('#share-copy').addEventListener('click', async () => {
+          const input = shareModalBody.querySelector('#share-url');
+          try {
+            await navigator.clipboard.writeText(input.value);
+          } catch {
+            input.select();
+            document.execCommand('copy');
+          }
+          shareModalBody.querySelector('#share-copy').textContent = 'コピーしました';
+        });
+      } catch (e) {
+        shareModalBody.innerHTML = `<p style="color:#fbb; margin-top:0;">共有リンクを作成できませんでした。</p><p style="font-size:0.9em;">${e.message}</p>`;
+      }
+    });
 
     // Selection & Picker
     let selectionStart = null;
