@@ -11,6 +11,7 @@ export class HomeView {
           <button id="btn-import">📸 写真から作成</button>
           <button id="btn-manual" class="secondary">📝 手動で新規作成</button>
           <button id="btn-settings" class="outline">⚙️ 設定 (社員・記号)</button>
+          <button id="btn-receive" class="outline">📥 共有コードで取り込む</button>
         </div>
       </div>
     `;
@@ -18,6 +19,13 @@ export class HomeView {
         div.querySelector('#btn-import').addEventListener('click', () => window.location.hash = 'import');
         div.querySelector('#btn-manual').addEventListener('click', () => window.location.hash = 'editor');
         div.querySelector('#btn-settings').addEventListener('click', () => window.location.hash = 'settings');
+        div.querySelector('#btn-receive').addEventListener('click', () => {
+            const raw = prompt('共有コード (例: ABCD-EFGH) を入力してください');
+            if (raw === null) return;
+            const code = String(raw).toUpperCase().replace(/[^A-Z0-9]/g, '');
+            if (!code) { alert('コードが入力されていません。'); return; }
+            window.location.hash = `share/${code}`;
+        });
 
         return div;
     }

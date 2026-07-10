@@ -496,6 +496,24 @@ export class Store {
         this.notify();
     }
 
+    // 共有データの取り込み用: 現在のデータをバックアップしてから丸ごと置き換え、
+    // load() を通すことで既存のマイグレーション処理を新データにも適用する。
+    replaceState(newState) {
+        if (!newState || typeof newState !== 'object') {
+            throw new Error('共有データが空です。');
+        }
+        const current = localStorage.getItem('shift-scheduler-data');
+        if (current) {
+            localStorage.setItem('shift-scheduler-data-import-backup', JSON.stringify({
+                savedAt: new Date().toISOString(),
+                data: JSON.parse(current)
+            }));
+        }
+        localStorage.setItem('shift-scheduler-data', JSON.stringify(newState));
+        this.state = this.getInitialState();
+        this.load();
+    }
+
     updateSchedule(yearMonth, schedule) {
         this.state.schedule = { ...this.state.schedule, [yearMonth]: schedule };
         this.save();
