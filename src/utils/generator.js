@@ -1,11 +1,27 @@
 import { ShiftConstraints } from './constraints.js';
 import { JapaneseCalendar } from './holidays.js';
+import { isManualImmutableSymbol } from './symbols.js';
+
+// 決定論的な擬似乱数(mulberry32)。生成を再現可能にするため Math.random は使わない。
+// 同一入力→同一結果になり、バグが再現できるようになる。
+function mulberry32(seed) {
+    let a = seed >>> 0;
+    return function () {
+        a |= 0;
+        a = (a + 0x6D2B79F5) | 0;
+        let t = Math.imul(a ^ (a >>> 15), 1 | a);
+        t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+}
 
 export class Generator {
     constructor(store) {
         this.store = store;
         this.constraints = new ShiftConstraints(store);
         this.generationDeadline = 0;
+        // generate() の各 attempt 冒頭で seed を差し替える。既定でも決定論的に初期化。
+        this.rng = mulberry32(0x9E3779B9);
     }
 
     isGenerationTimeUp() {
@@ -48,7 +64,9 @@ export class Generator {
 
     isOffSym(sym) {
         if (!sym) return false;
-        return this.constraints.isOff(sym) || sym === '希' || sym === '欠' || sym === '/';
+        // 手動不可侵記号(希/欠/／//)は全角・半角ともここで OFF 扱いに含める。
+        // 以前は半角 '/' しか見ておらず、全角 '／' セルが連勤カウントに勤務として算入されていた。
+        return this.constraints.isOff(sym) || isManualImmutableSymbol(sym);
     }
 
     isManualWorkSym(sym) {
@@ -444,6 +462,10 @@ export class Generator {
                 const remainingMs = Math.max(500, totalDeadline - Date.now());
                 this.generationDeadline = Date.now() + Math.max(500, Math.floor(remainingMs / remainingAttempts));
 
+                // attempt ごとに決定論的シードを差し替える(Math.random 排除)。
+                // 乱数由来の非決定性はこれで消える。残る非決定源は時間予算(Phase②で対応)。
+                this.rng = mulberry32((0x9E3779B9 ^ Math.imul(attempt + 1, 0x85EBCA6B)) >>> 0);
+
                 const matrix = this.buildInitialMatrix(yearMonth, daysInMonth, allStaff, baseSchedule, clearUnlocked);
                 this.runGenerationPipeline(matrix, allStaff, targetStaff, dailySlots, startDay, endDay, yearMonth);
                 const score = this.scoreMatrix(matrix, allStaff, targetStaff, dailySlots, startDay, endDay);
@@ -617,7 +639,7 @@ export class Generator {
                 const dStr = String(d).padStart(2, '0');
                 if (existing && existing[dStr]) {
                     const cell = existing[dStr];
-                    const isImmutable = cell.locked || cell.symbol === '希' || cell.symbol === '欠' || cell.symbol === '/';
+                    const isImmutable = cell.locked || isManualImmutableSymbol(cell.symbol);
                     if (!clearUnlocked || isImmutable) {
                         matrix[s.id][d].symbol = cell.symbol;
                         matrix[s.id][d].type = cell.type;
@@ -905,7 +927,7 @@ export class Generator {
                 if (!alreadyHasShukyu) {
                     const openDays = weekDays.filter(d => !matrix[s.id][d].symbol);
                     if (openDays.length > 0) {
-                        const targetD = openDays[Math.floor(Math.random() * openDays.length)];
+                        const targetD = openDays[Math.floor(this.rng() * openDays.length)];
                         matrix[s.id][targetD].symbol = '週休';
                         matrix[s.id][targetD].type = 'OFF';
                         matrix[s.id][targetD].fixed = true;
@@ -971,7 +993,7 @@ export class Generator {
             if (!matrix[staffId][d].symbol) open.push(d);
         }
         if (open.length > 0) {
-            const tgt = open[Math.floor(Math.random() * open.length)];
+            const tgt = open[Math.floor(this.rng() * open.length)];
             matrix[staffId][tgt].symbol = '非番';
             matrix[staffId][tgt].type = 'OFF';
             matrix[staffId][tgt].fixed = true;

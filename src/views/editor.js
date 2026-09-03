@@ -823,7 +823,12 @@ export class EditorView {
       exporter.exportToPDF('schedule-print-area', 'schedule.pdf');
     });
 
-    addListener('#btn-save', 'click', () => alert('Saved!'));
+    // セル編集は都度 store に永続化されるが、明示保存としても localStorage へ確実に書き出す。
+    // 以前は alert('Saved!') と表示するだけで実際には何もしていなかった。
+    addListener('#btn-save', 'click', () => {
+      this.store.save();
+      alert('保存しました。');
+    });
 
     // --- 共有 ---
     // 共有ボタン: 全データをサーバーに保存し、相手が1タップで取り込めるリンクを発行する。
@@ -966,22 +971,10 @@ export class EditorView {
       const day = firstCell.dataset.day;
       const dateStr = `${ym}-${String(day).padStart(2, '0')}`;
 
-      const { JapaneseCalendar } = window.app.models || {}; // Or import if needed, but since it's global... wait, JapaneseCalendar is in utils. Let's just do a basic check or assume the store/generator knows.
-      // Actually, we can check the header color or just do a quick Date check. But holidays are tricky without JapaneseCalendar.
-      // Let's do a basic Date check for sat/sun, and fallback to weekday caps if unsure.
-      const [y, m] = ym.split('-');
-      const dObj = new Date(y, m - 1, day);
-      const dayOfWeek = dObj.getDay();
-
-      // To be perfectly accurate we would use JapaneseCalendar.isHoliday(dateStr), but since it's a UI menu, we'll approximate or use the generator's helper if available globally.
-      const isSun = dayOfWeek === 0;
-      const isSat = dayOfWeek === 6;
-
-      // Let's check if the header has the holiday color as a hacky but 100% accurate client-side check
-      const headerCell = document.querySelector(`th.date-header[data-ym="${ym}"][data-day="${day}"]`);
-      const isHolColor = headerCell && headerCell.style.backgroundColor === 'rgb(61, 26, 26)'; // #3d1a1a
-
-      const isSunOrHol = isSun || isHolColor;
+      // 日祝判定は正規のカレンダーで行う(以前はヘッダーの背景色文字列で判定する
+      // ハックだった。配色を変えると壊れるため撤去)。JapaneseCalendar は上部で import 済み。
+      const isSat = JapaneseCalendar.isSaturday(dateStr);
+      const isSunOrHol = JapaneseCalendar.isSunday(dateStr) || JapaneseCalendar.isHoliday(dateStr);
 
       const baseCaps = staff.capabilities || [];
       const satCaps = staff.satCapabilities || baseCaps;

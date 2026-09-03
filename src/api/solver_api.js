@@ -1,4 +1,5 @@
 import { JapaneseCalendar } from '../utils/holidays.js';
+import { isManualImmutableSymbol } from '../utils/symbols.js';
 
 export class SolverAPI {
 
@@ -69,7 +70,8 @@ export class SolverAPI {
             store.state.staff.forEach(s => {
                 const cell = monthSch?.[s.id]?.[d];
                 if (cell && cell.symbol) {
-                    const isSpecialManualState = cell.symbol === '希' || cell.symbol === '欠' || cell.symbol === '／';
+                    // 半角 '/' の見落としで、ブロックセルがソルバーに固定として渡らない不具合を防ぐ。
+                    const isSpecialManualState = isManualImmutableSymbol(cell.symbol);
                     const shouldLock = generationMode === 'fill'
                         ? true
                         : Boolean(cell.locked || isSpecialManualState);
