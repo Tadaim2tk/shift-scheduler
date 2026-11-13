@@ -14,7 +14,7 @@ export class Store {
             schedule: {},
             settings: {
                 // 連勤上限などの制約パラメータはここを唯一の出所(single source of truth)とする。
-                // constraints.js(JS検証) はこの値を参照する。
+                // 生成は Python ソルバー (solver/model.py) が行い、この値は payload で渡る。
                 maxConsecutiveWork: 5,   // 連続勤務の上限日数（これを超える連勤を禁止）
                 weeklyShukyu: 1,         // 1週あたりの週休数
                 minOffPer4Weeks: 8,      // 4週あたりの最低休日数(4週8休)
