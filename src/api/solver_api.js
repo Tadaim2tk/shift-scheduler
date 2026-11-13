@@ -1,4 +1,5 @@
 import { JapaneseCalendar } from '../utils/holidays.js';
+import { isManualImmutableSymbol } from '../utils/symbols.js';
 
 export class SolverAPI {
 
@@ -69,7 +70,8 @@ export class SolverAPI {
             store.state.staff.forEach(s => {
                 const cell = monthSch?.[s.id]?.[d];
                 if (cell && cell.symbol) {
-                    const isSpecialManualState = cell.symbol === '希' || cell.symbol === '欠' || cell.symbol === '／';
+                    // 半角 '/' の見落としで、ブロックセルがソルバーに固定として渡らない不具合を防ぐ。
+                    const isSpecialManualState = isManualImmutableSymbol(cell.symbol);
                     const shouldLock = generationMode === 'fill'
                         ? true
                         : Boolean(cell.locked || isSpecialManualState);
@@ -95,15 +97,33 @@ export class SolverAPI {
         };
     }
 
+    static apiBase() {
+        return import.meta.env.VITE_API_URL || 'http://localhost:8000';
+    }
+
+    // ソルバー (Render) は一定時間アクセスが無いと停止し、次のアクセスで起動に
+    // 40秒以上かかる。生成ボタンを押してから待たせないよう、エディタを開いた時点で
+    // 起こし、開いている間は停止しない間隔で軽く叩き続ける。
+    // 何度呼んでもタイマーは1つだけ。失敗は無視する(生成時に改めてエラーになる)。
+    static keepWarm() {
+        const ping = () => {
+            const onEditor = window.location.hash.slice(1) === 'editor';
+            if (!onEditor || document.visibilityState !== 'visible') return;
+            fetch(`${SolverAPI.apiBase()}/health`).catch(() => {});
+        };
+        ping();
+        if (!SolverAPI._warmTimer) {
+            SolverAPI._warmTimer = window.setInterval(ping, 10 * 60 * 1000);
+        }
+    }
+
     static async solve(payload) {
         const controller = new AbortController();
-        // Render free/low-tier instances can cold-start slowly, while the
-        // Python CP-SAT solver is allowed to search for up to 120 seconds.
-        // A 3s browser timeout made production almost always fall back to the
-        // weaker JS generator before the real solver had a chance to answer.
-        const timeout = window.setTimeout(() => controller.abort(), 130000);
+        // 停止状態からの起動(実測40秒超)＋ CP-SAT の探索上限 120 秒を待てる長さにする。
+        // ブラウザ内の代替生成は廃止したので、ここで切ると生成は失敗になる。
+        const timeout = window.setTimeout(() => controller.abort(), 200000);
         try {
-            const apiBase = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+            const apiBase = SolverAPI.apiBase();
             const response = await fetch(`${apiBase}/solve`, {
                 method: 'POST',
                 headers: {
